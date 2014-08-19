@@ -1,0 +1,17 @@
+bin/financeta
+Build.PL
+Changes
+images/icon.gif
+images/sm_perl_id_bk_wt.gif
+lib/App.pm
+lib/TA.pm
+lib/TA.pod
+lib/TA/Indicators.pm
+lib/TA/Mo.pm
+LICENSE
+MANIFEST			This list of files
+META.json
+META.yml
+README
+share/changelogger.sh
+t/00_use.t

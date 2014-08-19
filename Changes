@@ -1,0 +1,75 @@
+Tue Aug 19 10:22:32 2014 -0400
+8c255395624101a45341d40cdb1b71ef6b11722a
+Changelog
+
+Tue Aug 19 10:21:15 2014 -0400
+2a95c889d39052b3412062546bf0e12a2ecbefa5
+- upgrading version number for future release - changing the distribution package name to App::financeta
+
+Mon Aug 18 23:07:00 2014 -0400
+c13481b24711a1ef332ba63a7ddce0820d1257e5
+Adding checked menu options for a nice look
+
+Mon Aug 18 18:44:32 2014 -0400
+4052ff9ced456df54a5e102378a091b63808d028
+removing unnecessary old script and cruft
+
+Mon Aug 18 18:33:23 2014 -0400
+67f798f756f800a84639ac9cadb3f0adb2cfe4b2
+- store indicator information for plots so that variety of plots can still   manage plotting the same indicator per currency - manage tab indexing correctly with uniqueness - add error checking to tabs detection
+
+Mon Aug 18 17:31:34 2014 -0400
+2f6dce1a953c8de3e595221446b696cefbd57f03
+indicator plotting now works
+
+Mon Aug 18 16:55:17 2014 -0400
+b14895fb9f1e1def335a9ad79175fa1e20e939f9
+Execute the indicator and display the output on screen
+
+Mon Aug 18 14:58:14 2014 -0400
+2a7ea8bbbc5e93db68be5df3b203ebbba6b78a72
+cosmetic change to version printing
+
+Mon Aug 18 14:13:58 2014 -0400
+127ec98c0077462b4c34e64f2ee3909f314b5c1f
+- Tracking indicator selection correctly - Adding basic ARGV for financeta
+
+Mon Aug 18 11:55:22 2014 -0400
+8775e39bfd0ba376b362a3c0e4d5ed2275f9cf9f
+- remove PGPLOT completely - make indicator wizard look neater
+
+Mon Aug 18 10:56:17 2014 -0400
+81f46b196c57d9e4751a46464f072f180c4bdf94
+license gpl3 warning removed
+
+Sun Aug 17 12:51:31 2014 -0400
+0e6695020830e0cd19685d534b7a943eaf9cce20
+adding a simple indicator wizard and getting the enable/disable look right.
+
+Sat Aug 16 23:58:46 2014 -0400
+9fb2b949f396163a7f32751deca52f956ac32788
+a sample indicator info is now stored
+
+Sat Aug 16 22:12:09 2014 -0400
+a11b851bc09c03f88ea6451371c6f5035f5b7b39
+Work-in-progress analytical wizard
+
+Sat Aug 16 21:42:28 2014 -0400
+9f80ba52d3f2d8e27e10970dcc1d64596e313bf6
+Adding a temporary help viewer
+
+Sat Aug 16 21:29:25 2014 -0400
+6e47d99f90e5c4f567385546a6829dc845ef0fc7
+moving the POD out of the file
+
+Sat Aug 16 21:21:02 2014 -0400
+a05f4a12117db354c20ad172b9adc131e62f7b55
+Adding a progress bar to manage the lag time due to downloads
+
+Sat Aug 16 20:52:06 2014 -0400
+bf641aaabefee8e8a6ebed4f51681f2d2259bc90
+Minor checks for failed downloads
+
+Sat Aug 16 11:43:12 2014 -0400
+d788c4e095f60840d76cba36a65e9a6aee5ba151
+upgrading for release 0.03
