@@ -62,19 +62,19 @@
    "provides" : {
       "App::financeta" : {
          "file" : "lib/App.pm",
-         "version" : "0.05"
+         "version" : "0.06"
       },
       "PDL::Finance::TA" : {
          "file" : "lib/TA.pm",
-         "version" : "0.05"
+         "version" : "0.06"
       },
       "PDL::Finance::TA::Indicators" : {
          "file" : "lib/TA/Indicators.pm",
-         "version" : "0.05"
+         "version" : "0.06"
       },
       "PDL::Finance::TA::Mo" : {
          "file" : "lib/TA/Mo.pm",
-         "version" : "0.05"
+         "version" : "0.06"
       }
    },
    "release_status" : "stable",
@@ -89,5 +89,5 @@
          "url" : "https://github.com/vikasnkumar/financeta"
       }
    },
-   "version" : "0.05"
+   "version" : "0.06"
 }

@@ -4,7 +4,7 @@ use warnings;
 use 5.10.0;
 use feature 'say';
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 $VERSION = eval $VERSION;
 
 use PDL::Finance::TA::Mo;
@@ -1084,6 +1084,12 @@ sub plot_data_gnuplot {
         Capture::Tiny::capture {
             my @terms = PDL::Graphics::Gnuplot::terminfo();
             $term = 'aqua' if grep {/aqua/} @terms;
+            $term = 'wxt' if grep {/wxt/} @terms;
+        };
+    } elsif ($^O =~ /Win32|Cygwin/i) {
+        Capture::Tiny::capture {
+            my @terms = PDL::Graphics::Gnuplot::terminfo();
+            $term = 'windows' if grep {/windows/} @terms;
             $term = 'wxt' if grep {/wxt/} @terms;
         };
     }
