@@ -4,7 +4,7 @@ use warnings;
 use 5.10.0;
 use feature 'say';
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 $VERSION = eval $VERSION;
 
 use PDL::Finance::TA::Mo;
@@ -106,6 +106,8 @@ sub _menu_items {
                             $win->menu->plot_ohlcv->enabled(1);
                             $win->menu->plot_close->enabled(1);
                             $win->menu->plot_closev->enabled(1);
+                            $win->menu->plot_cdl->enabled(1);
+                            $win->menu->plot_cdlv->enabled(1);
                             $win->menu->add_indicator->enabled(1);
                             $gui->progress_bar_close($bar);
                         }
@@ -138,13 +140,14 @@ sub _menu_items {
                         $win->menu->uncheck('plot_ohlcv');
                         $win->menu->uncheck('plot_close');
                         $win->menu->uncheck('plot_closev');
-
+                        $win->menu->uncheck('plot_cdl');
+                        $win->menu->uncheck('plot_cdlv');
                     },
                     $self,
                 ],
                 [
                     'plot_ohlcv',
-                    'OHLC Volume', '', '',
+                    'OHLC & Volume', '', '',
                     sub {
                         my ($win, $item) = @_;
                         my $gui = $win->menu->data($item);
@@ -154,6 +157,8 @@ sub _menu_items {
                         $win->menu->uncheck('plot_ohlc');
                         $win->menu->uncheck('plot_close');
                         $win->menu->uncheck('plot_closev');
+                        $win->menu->uncheck('plot_cdl');
+                        $win->menu->uncheck('plot_cdlv');
                     },
                     $self,
                 ],
@@ -169,12 +174,14 @@ sub _menu_items {
                         $win->menu->uncheck('plot_ohlc');
                         $win->menu->uncheck('plot_ohlcv');
                         $win->menu->uncheck('plot_closev');
+                        $win->menu->uncheck('plot_cdl');
+                        $win->menu->uncheck('plot_cdlv');
                     },
                     $self,
                 ],
                 [
                     'plot_closev',
-                    'Close Price Volume', '', '',
+                    'Close Price & Volume', '', '',
                     sub {
                         my ($win, $item) = @_;
                         my $gui = $win->menu->data($item);
@@ -184,6 +191,42 @@ sub _menu_items {
                         $win->menu->uncheck('plot_ohlc');
                         $win->menu->uncheck('plot_ohlcv');
                         $win->menu->uncheck('plot_close');
+                        $win->menu->uncheck('plot_cdl');
+                        $win->menu->uncheck('plot_cdlv');
+                    },
+                    $self,
+                ],
+                [
+                    'plot_cdl',
+                    'Candlesticks', '', '',
+                    sub {
+                        my ($win, $item) = @_;
+                        my $gui = $win->menu->data($item);
+                        my ($data, $symbol, $indicators) = $gui->get_tab_data($win);
+                        $gui->plot_data($win, $data, $symbol, 'CANDLE', $indicators);
+                        $win->menu->check('plot_cdl');
+                        $win->menu->uncheck('plot_ohlc');
+                        $win->menu->uncheck('plot_ohlcv');
+                        $win->menu->uncheck('plot_close');
+                        $win->menu->uncheck('plot_closev');
+                        $win->menu->uncheck('plot_cdlv');
+                    },
+                    $self,
+                ],
+                [
+                    'plot_cdlv',
+                    'Candlesticks & Volume', '', '',
+                    sub {
+                        my ($win, $item) = @_;
+                        my $gui = $win->menu->data($item);
+                        my ($data, $symbol, $indicators) = $gui->get_tab_data($win);
+                        $gui->plot_data($win, $data, $symbol, 'CANDLEV', $indicators);
+                        $win->menu->check('plot_cdlv');
+                        $win->menu->uncheck('plot_ohlc');
+                        $win->menu->uncheck('plot_ohlcv');
+                        $win->menu->uncheck('plot_close');
+                        $win->menu->uncheck('plot_closev');
+                        $win->menu->uncheck('plot_cdl');
                     },
                     $self,
                 ],
@@ -247,6 +290,8 @@ sub run {
     $self->main->menu->plot_ohlcv->enabled(0);
     $self->main->menu->plot_close->enabled(0);
     $self->main->menu->plot_closev->enabled(0);
+    $self->main->menu->plot_cdl->enabled(0);
+    $self->main->menu->plot_cdlv->enabled(0);
     $self->main->menu->add_indicator->enabled(0);
     run Prima;
 }
@@ -493,7 +538,7 @@ sub add_indicator($$$) {
     if ($self->indicator_wizard($win)) {
         my $iref = $self->current->{indicator};
         say Dumper($iref) if $self->debug;
-        my $output = $self->indicator->execute_ohlc($data, $iref);
+        my $output = $self->indicator->execute_ohlcv($data, $iref);
         unless (defined $output) {
             message_box('Indicator Error',
                 "Unable to run the indicator on data.",
@@ -509,7 +554,15 @@ sub add_indicator($$$) {
 
 sub indicator_parameter_wizard {
     my ($self, $gbox, $fn_name, $grp, $params) = @_;
-    return unless defined $gbox;
+    if ($gbox) {
+        # remove the current parameter screen
+        my @widgets = $gbox->get_widgets;
+        if (@widgets) {
+            map { $_->close() } @widgets;
+        }
+    } else {
+        return;
+    }
     # if all are defined create the parameter screen
     if (defined $fn_name and defined $grp and defined $params) {
         $gbox->text("$fn_name Parameters");
@@ -521,6 +574,19 @@ sub indicator_parameter_wizard {
         my $sz_y = $size[1] / ($num + 1);
         my $count = 0;
         $self->current->{indicator}->{params} = {};
+        # if no params just write that
+        unless (scalar @$params) {
+            $gbox->insert('Label',
+                text => "There are no parameters to configure.",
+                name => "label_$grp\_noparams",
+                alignment => ta::Left,
+                autoHeight => 1,
+                autoWidth => 1,
+                origin => [$origin[0] + 10,
+                    $origin[1] + $count * $sz_y - 40],
+                font => {height => 16},
+            );
+        }
         foreach my $p (reverse @$params) {
             next unless ref $p eq 'ARRAY';
             my $hkey = $p->[0];
@@ -638,11 +704,6 @@ sub indicator_parameter_wizard {
             $count++;
         }
     } else {
-        # if none are defined remove the parameter screen
-        my @widgets = $gbox->get_widgets;
-        if (@widgets) {
-            map { $_->close() } @widgets;
-        }
         $gbox->text("Indicator Parameters");
         delete $self->current->{indicator}->{params};
     }
@@ -677,19 +738,21 @@ sub indicator_wizard {
         autoHeight => 1,
         autoWidth => 1,
         origin => [20, 440],
+        hint => 'This is a list of indicator groups',
+        hintVisible => 1,
     );
     $w->insert(ComboBox =>
         name => 'cbox_groups',
         style => cs::DropDownList,
         height => 30,
-        width => 180,
+        width => 360,
         hScroll => 0,
         multiSelect => 0,
         multiColumn => 0,
         dragable => 0,
         focusedItem => -1,
-        font => { height => 16 },
-        items => ['', @groups],
+        font => { height => 14 },
+        items => [ '', @groups],
         origin => [180, 440],
         onChange => sub {
             my $cbox = shift;
@@ -708,11 +771,13 @@ sub indicator_wizard {
                 $owner->cbox_funcs->items([]);
                 $owner->cbox_funcs->focusedItem(-1);
                 $self->indicator_parameter_wizard($owner->gbox_params);
+                $owner->cbox_funcs->text('');
                 $owner->btn_ok->enabled(0);
                 delete $self->current->{indicator}->{group};
             }
         },
     );
+    $w->cbox_groups->text('');
     $w->insert(Label => name => 'label_funcs',
         text => 'Select Function',
         font => { style => fs::Bold, height => 16 },
@@ -720,18 +785,21 @@ sub indicator_wizard {
         autoHeight => 1,
         autoWidth => 1,
         origin => [20, 400],
+        hint => 'Each indicator group has multiple indicators it supports',
+        hintVisible => 1,
     );
     $w->insert(ComboBox =>
         name => 'cbox_funcs',
         style => cs::DropDownList,
         height => 30,
-        width => 180,
+        width => 360,
         hScroll => 0,
-        font => { height => 16 },
+        font => { height => 14 },
         multiSelect => 0,
         multiColumn => 0,
         dragable => 0,
         focusedItem => -1,
+        text => '',
         items => [],
         origin => [180, 400],
         onChange => sub {
@@ -755,6 +823,7 @@ sub indicator_wizard {
                 $cbox->focusedItem(-1);
                 delete $self->current->{indicator}->{func};
                 $self->indicator_parameter_wizard($owner->gbox_params);
+                $cbox->text('');
             }
         },
     );
@@ -894,17 +963,41 @@ sub display_data {
     } else {
         $nt->tabs([$symbol]);
     }
-    $tabsize[0] *= 0.98;
-    $tabsize[1] *= 0.96;
-    # take existing items
+    my $pc = $nt->pageCount;
+    say "TabCount: $pc" if $self->debug;
+    my $pageno = $pc;
+    # find the existing tab with the same symbol info and remove the widget
+    # there and get that page number
+    # default headers
     my $headers = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume'];
+    my $existing_indicators = [];
+    for my $idx (0 .. $pc) {
+        my @wids = $nt->widgets_from_page($idx);
+        next unless @wids;
+        my @dls = grep { $_->name eq "tab_$symbol" } @wids;
+        if (@dls) {
+            foreach (@dls) {
+                say "Found existing ", $_->name, " at $idx" if $self->debug;
+                $headers = $_->headers if defined $_->headers;
+                push @$existing_indicators, @{$_->{-indicators}} if exists $_->{-indicators};
+                $nt->delete_widget($_);
+            }
+            $pageno = $idx;
+            last;
+        }
+    }
+    # handle the current indicator first
     if ($output and scalar @$output) {
         foreach my $a (@$output) {
             push @$headers, $a->[0];
             # splice the indicator PDL into $data
             $data = $data->glue(1, $a->[1]) if ref $a->[1] eq 'PDL';
         }
+        # add the current indicator to the bottom of the list
+        push @$existing_indicators, {indicator => $iref, data => $output};
     }
+    say "Data dimension: ", Dumper([$data->dims]) if $self->debug;
+    say "Updated headers: ", Dumper($headers) if $self->debug;
     my $items = $data->transpose->unpdl;
     my $tz = $self->timezone;
     # reformat
@@ -915,24 +1008,8 @@ sub display_data {
             $arr->[$i] = '' if $arr->[$i] =~ /BAD/i;
         }
     }
-    my $pc = $nt->pageCount;
-    say "TabCount: $pc" if $self->debug;
-    my $pageno = $pc;
-    # find the existing tab with the same symbol info and remove the widget
-    # there and get that page number
-    for my $idx (0 .. $pc) {
-        my @wids = $nt->widgets_from_page($idx);
-        next unless @wids;
-        my @dls = grep { $_->name eq "tab_$symbol" } @wids;
-        if (@dls) {
-            foreach (@dls) {
-                say "Found existing ", $_->name, " at $idx" if $self->debug;
-                $nt->delete_widget($_);
-            }
-            $pageno = $idx;
-            last;
-        }
-    }
+    $tabsize[0] *= 0.98;
+    $tabsize[1] *= 0.96;
     my $dl = $nt->insert_to_page($pageno, 'DetailedList',
         name => "tab_$symbol",
         pack => { expand => 1, fill => 'both' },
@@ -963,13 +1040,7 @@ sub display_data {
     $nt->pageIndex($pageno);
     $dl->{-pdl} = $data;
     $dl->{-symbol} = $symbol;
-    if ($output and $iref) {
-        $dl->{-indicators} = [] unless defined $dl->{-indicators};
-        push @{$dl->{-indicators}}, {
-            indicator => $iref,
-            data => $output,
-        };
-    }
+    $dl->{-indicators} = $existing_indicators if defined $existing_indicators;
     1;
 }
 
@@ -1021,25 +1092,31 @@ sub plot_data_gnuplot {
     $win->{plot} = $pwin;
     $symbol = $self->current->{symbol} unless defined $symbol;
     $type = $self->current->{plot_type} unless defined $type;
-    my @indicator = ();
+    my @indicator_plot = ();
+    $self->indicator->color_idx(0); # reset color index
     if (defined $indicators and scalar @$indicators) {
         # ok now create a list of indicators to plot
         foreach (@$indicators) {
             my $iref = $_->{indicator};
             my $idata = $_->{data};
             my @iplot = $self->indicator->get_plot_args($data(,(0)), $idata, $iref);
-            push @indicator, @iplot if scalar @iplot;
+            push @indicator_plot, @iplot if scalar @iplot;
         }
     }
     given ($type) {
         when ('OHLC') {
             $pwin->reset();
             $pwin->plot({
-                    title => "$symbol Open-High-Low-Close",
-                    xlabel => 'Date',
-                    ylabel => 'Price',
+                    object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
+                    title => ["$symbol Open-High-Low-Close", textcolor => 'rgb "white"'],
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
+                    xlabel => ['Date', textcolor => 'rgb "yellow"'],
+                    ylabel => ['Price', textcolor => 'rgb "yellow"'],
                     xdata => 'time',
-                    xtics => {format => '%Y-%m-%d', rotate => -90, },
+                    xtics => {format => '%Y-%m-%d', rotate => -90, textcolor => 'orange', },
+                    ytics => {textcolor => 'orange'},
+                    label => [1, $self->brand, textcolor => 'rgb "cyan"', at => "graph 0.90,0.03"],
                 },
                 {
                     with => 'financebars',
@@ -1047,23 +1124,29 @@ sub plot_data_gnuplot {
                     legend => 'Price',
                 },
                 $data(,(0)), $data(,(1)), $data(,(2)), $data(,(3)), $data(,(4)),
-                @indicator,
+                @indicator_plot,
             );
         }
         when ('OHLCV') {
             # use multiplot
             $pwin->reset();
-            $pwin->multiplot(title => "$symbol Price & Volume");
+            $pwin->multiplot();
             $pwin->plot({
-                    xlabel => '',
-                    ylabel => 'Price',
+                    object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
+                    xlabel => ['Date', textcolor => 'rgb "yellow"'],
+                    ylabel => ['Price', textcolor => 'rgb "yellow"'],
+                    title => ["$symbol Price & Volume", textcolor => "rgb 'white'"],
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
                     xdata => 'time',
-                    xtics => {format => '%Y-%m-%d', rotate => -90, },
+                    xtics => {format => '%Y-%m-%d', rotate => -90, textcolor => 'orange', },
+                    ytics => {textcolor => 'orange'},
                     bmargin => 0,
                     lmargin => 9,
                     rmargin => 2,
                     size => ["1,0.7"], #bug in P:G:G
                     origin => [0, 0.3],
+                    label => [1, $self->brand, textcolor => 'rgb "cyan"', at => "graph 0.90,0.03"],
                 },
                 {
                     with => 'financebars',
@@ -1071,18 +1154,110 @@ sub plot_data_gnuplot {
                     legend => 'Price',
                 },
                 $data(,(0)), $data(,(1)), $data(,(2)), $data(,(3)), $data(,(4)),
-                @indicator,
+                @indicator_plot,
             );
             $pwin->plot({
-                    ylabel => 'Volume (in 1M)',
-                    xlabel => 'Date',
+                    object => '1',
+                    title => '',
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
+                    ylabel => ['Volume (in 1M)', textcolor => 'rgb "yellow"'],
+                    xlabel => '',
+                    xtics => '',
+                    ytics => {textcolor => 'orange'},
+                    bmargin => 0,
                     tmargin => 0,
                     lmargin => 9,
                     rmargin => 2,
                     size => ["1,0.3"], #bug in P:G:G
                     origin => [0, 0],
+                    label => [1, "", at => "graph 0.90,0.03"],
                 },
-                {with => 'impulses', legend => 'Volume', linecolor => 'blue'},
+                {
+                    with => 'impulses',
+                    legend => 'Volume',
+                    linecolor => 'blue',
+                },
+                $data(,(0)), $data(,(5)) / 1e6,
+            );
+            $pwin->end_multi;
+        }
+        when ('CANDLE') {
+            # use candlesticks feature of Gnuplot
+            $pwin->reset();
+            $pwin->plot({
+                    object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
+                    title => ["$symbol Open-High-Low-Close", textcolor => 'rgb "white"'],
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
+                    xlabel => ['Date', textcolor => 'rgb "yellow"'],
+                    ylabel => ['Price', textcolor => 'rgb "yellow"'],
+                    ytics => {textcolor => 'orange'},
+                    xdata => 'time',
+                    xtics => {format => '%Y-%m-%d', rotate => -90, textcolor => 'orange', },
+                    label => [1, $self->brand, textcolor => 'rgb "cyan"', at => "graph 0.90,0.03"],
+                },
+                {
+                    with => 'candlesticks',
+                    linecolor => 'red',
+                    legend => 'Price',
+                },
+                $data(,(0)), $data(,(1)), $data(,(2)), $data(,(3)), $data(,(4)),
+                @indicator_plot,
+            );
+        }
+        when ('CANDLEV') {
+            # use multiplot
+            $pwin->reset();
+            $pwin->multiplot();
+            $pwin->plot({
+                    object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
+                    title => ["$symbol Price & Volume", textcolor => "rgb 'white'"],
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
+                    xlabel => ['Date', textcolor => 'rgb "yellow"'],
+                    ylabel => ['Price', textcolor => 'rgb "yellow"'],
+                    xdata => 'time',
+                    ytics => {textcolor => 'orange'},
+                    xtics => {format => '%Y-%m-%d', rotate => -90, textcolor => 'orange', },
+                    tmargin => '',
+                    bmargin => 0,
+                    lmargin => 9,
+                    rmargin => 2,
+                    size => ["1,0.7"], #bug in P:G:G
+                    origin => [0, 0.3],
+                    label => [1, $self->brand, textcolor => 'rgb "cyan"', at => "graph 0.90,0.03"],
+                },
+                {
+                    with => 'candlesticks',
+                    linecolor => 'red',
+                    legend => 'Price',
+                },
+                $data(,(0)), $data(,(1)), $data(,(2)), $data(,(3)), $data(,(4)),
+                @indicator_plot,
+            );
+            $pwin->plot({
+                    object => '1',
+                    title => '',
+                    ylabel => ['Volume (in 1M)', textcolor => 'rgb "yellow"'],
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
+                    xtics => '',
+                    xlabel => '',
+                    ytics => {textcolor => 'orange'},
+                    bmargin => 0,
+                    tmargin => 0,
+                    lmargin => 9,
+                    rmargin => 2,
+                    size => ["1,0.3"], #bug in P:G:G
+                    origin => [0, 0],
+                    label => [1, "", at => "graph 0.90,0.03"],
+                },
+                {
+                    with => 'impulses',
+                    legend => 'Volume',
+                    linecolor => 'blue',
+                },
                 $data(,(0)), $data(,(5)) / 1e6,
             );
             $pwin->end_multi;
@@ -1090,36 +1265,54 @@ sub plot_data_gnuplot {
         when ('CLOSEV') {
             # use multiplot
             $pwin->reset();
-            $pwin->multiplot(title => "$symbol Close Price & Volume");
+            $pwin->multiplot();
             $pwin->plot({
-                    xlabel => '',
-                    ylabel => 'Close Price',
+                    object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
+                    title => ["$symbol Price & Volume", textcolor => "rgb 'white'"],
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
+                    ylabel => ['Close Price', textcolor => 'rgb "yellow"'],
+                    xlabel => ['Date', textcolor => 'rgb "yellow"'],
                     xdata => 'time',
-                    xtics => {format => '%Y-%m-%d', rotate => -90, },
+                    xtics => {format => '%Y-%m-%d', rotate => -90, textcolor => 'orange', },
+                    ytics => {textcolor => 'orange'},
                     bmargin => 0,
                     lmargin => 9,
                     rmargin => 2,
                     size => ["1,0.7"], #bug in P:G:G
                     origin => [0, 0.3],
+                    label => [1, $self->brand, textcolor => 'rgb "cyan"', at => "graph 0.90,0.03"],
                 },
                 {
                     with => 'lines',
-                    linecolor => 'black',
+                    linecolor => 'red',
                     legend => 'Close Price',
                 },
                 $data(,(0)), $data(,(4)),
-                @indicator,
+                @indicator_plot,
             );
             $pwin->plot({
-                    ylabel => 'Volume (in 1M)',
-                    xlabel => 'Date',
+                    object => '1',
+                    title => '',
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
+                    ylabel => ['Volume (in 1M)', textcolor => 'rgb "yellow"'],
+                    xlabel => '',
+                    xtics => '',
+                    ytics => {textcolor => 'orange'},
+                    bmargin => 0,
                     tmargin => 0,
                     lmargin => 9,
                     rmargin => 2,
                     size => ["1,0.3"], #bug in P:G:G
                     origin => [0, 0],
+                    label => [1, "", at => "graph 0.90,0.03"],
                 },
-                {with => 'impulses', legend => 'Volume', linecolor => 'blue'},
+                {
+                    with => 'impulses',
+                    legend => 'Volume',
+                    linecolor => 'blue',
+                },
                 $data(,(0)), $data(,(5)) / 1e6,
             );
             $pwin->end_multi;
@@ -1128,19 +1321,24 @@ sub plot_data_gnuplot {
             $type = 'CLOSE';
             $pwin->reset();
             $pwin->plot({
-                    title => "$symbol Close Price",
-                    xlabel => 'Date',
-                    ylabel => 'Close Price',
+                    object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
+                    title => ["$symbol Close Price", textcolor => 'rgb "white"'],
+                    key => ['on', 'outside', textcolor => 'rgb "yellow"'],
+                    border => 'linecolor rgbcolor "white"',
+                    xlabel => ['Date', textcolor => 'rgb "yellow"'],
+                    ylabel => ['Close Price', textcolor => 'rgb "yellow"'],
                     xdata => 'time',
-                    xtics => {format => '%Y-%m-%d', rotate => -90, },
+                    xtics => {format => '%Y-%m-%d', rotate => -90, textcolor => 'orange', },
+                    ytics => {textcolor => 'orange'},
+                    label => [1, $self->brand, textcolor => 'rgb "cyan"', at => "graph 0.90,0.03"],
                 },
                 {
                     with => 'lines',
-                    linecolor => 'black',
+                    linecolor => 'red',
                     legend => 'Close Price',
                 },
                 $data(,(0)), $data(,(4)),
-                @indicator,
+                @indicator_plot,
             );
         }
     }

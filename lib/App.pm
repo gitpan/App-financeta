@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use 5.10.0;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 $VERSION = eval $VERSION;
 
 use PDL::Finance::TA;
@@ -35,7 +35,9 @@ sub run {
         print "Help: Coming soon\n";
         return;
     }
-    my $gui = PDL::Finance::TA->new(debug => $opts{debug});
+    my $gui = PDL::Finance::TA->new(debug => $opts{debug},
+        brand => __PACKAGE__,
+    );
     $gui->run;
 }
 
@@ -57,7 +59,7 @@ as an application. It handles command line processing of C<financeta>.
 
 =head1 VERSION
 
-0.04
+0.05
 
 =head1 METHODS
 

@@ -28,15 +28,16 @@ no_index:
 provides:
   App::financeta:
     file: lib/App.pm
-    version: 0.04
+    version: 0.05
   PDL::Finance::TA:
     file: lib/TA.pm
-    version: 0.04
+    version: 0.05
   PDL::Finance::TA::Indicators:
     file: lib/TA/Indicators.pm
-    version: 0.04
+    version: 0.05
   PDL::Finance::TA::Mo:
     file: lib/TA/Mo.pm
+    version: 0.05
 requires:
   Capture::Tiny: 0
   Carp: 0
@@ -57,4 +58,4 @@ resources:
   bugtracker: https://github.com/vikasnkumar/financeta/issues
   license: http://www.gnu.org/licenses/old-licenses/gpl-1.0.txt
   repository: https://github.com/vikasnkumar/financeta
-version: 0.04
+version: 0.05
