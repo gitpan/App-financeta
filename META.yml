@@ -11,13 +11,13 @@ configure_requires:
   Pod::Readme: 0
   Software::License: 0
 dynamic_config: 1
-generated_by: 'Module::Build version 0.4207, CPAN::Meta::Converter version 2.132661'
+generated_by: 'Module::Build version 0.38, CPAN::Meta::Converter version 2.120351'
 keywords:
   - finance
   - technical-analysis
   - technical
   - analysis
-license: gpl
+license: open_source
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: 1.4
@@ -28,16 +28,16 @@ no_index:
 provides:
   App::financeta:
     file: lib/App.pm
-    version: 0.06
+    version: 0.07
   PDL::Finance::TA:
     file: lib/TA.pm
-    version: 0.06
+    version: 0.07
   PDL::Finance::TA::Indicators:
     file: lib/TA/Indicators.pm
-    version: 0.06
+    version: 0.07
   PDL::Finance::TA::Mo:
     file: lib/TA/Mo.pm
-    version: 0.06
+    version: 0.07
 requires:
   Capture::Tiny: 0
   Carp: 0
@@ -58,4 +58,4 @@ resources:
   bugtracker: https://github.com/vikasnkumar/financeta/issues
   license: http://www.gnu.org/licenses/old-licenses/gpl-1.0.txt
   repository: https://github.com/vikasnkumar/financeta
-version: 0.06
+version: 0.07

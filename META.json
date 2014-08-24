@@ -4,7 +4,7 @@
       "Vikas N. Kumar <vikas@cpan.org>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.4207",
+   "generated_by" : "Module::Build version 0.38, CPAN::Meta::Converter version 2.120351",
    "keywords" : [
       "finance",
       "technical-analysis",
@@ -12,7 +12,7 @@
       "analysis"
    ],
    "license" : [
-      "gpl_1"
+      "open_source"
    ],
    "meta-spec" : {
       "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",
@@ -62,19 +62,19 @@
    "provides" : {
       "App::financeta" : {
          "file" : "lib/App.pm",
-         "version" : "0.06"
+         "version" : "0.07"
       },
       "PDL::Finance::TA" : {
          "file" : "lib/TA.pm",
-         "version" : "0.06"
+         "version" : "0.07"
       },
       "PDL::Finance::TA::Indicators" : {
          "file" : "lib/TA/Indicators.pm",
-         "version" : "0.06"
+         "version" : "0.07"
       },
       "PDL::Finance::TA::Mo" : {
          "file" : "lib/TA/Mo.pm",
-         "version" : "0.06"
+         "version" : "0.07"
       }
    },
    "release_status" : "stable",
@@ -89,5 +89,5 @@
          "url" : "https://github.com/vikasnkumar/financeta"
       }
    },
-   "version" : "0.06"
+   "version" : "0.07"
 }
