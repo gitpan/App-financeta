@@ -3,6 +3,7 @@ abstract: 'App::financeta is a Technical Analysis GUI'
 author:
   - 'Vikas N. Kumar <vikas@cpan.org>'
 build_requires:
+  File::ShareDir: 0
   File::Spec: 0
   Module::Build: 0
   Test::More: 0
@@ -11,13 +12,13 @@ configure_requires:
   Pod::Readme: 0
   Software::License: 0
 dynamic_config: 1
-generated_by: 'Module::Build version 0.38, CPAN::Meta::Converter version 2.120351'
+generated_by: 'Module::Build version 0.4207, CPAN::Meta::Converter version 2.132661'
 keywords:
   - finance
   - technical-analysis
   - technical
   - analysis
-license: open_source
+license: gpl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: 1.4
@@ -25,25 +26,27 @@ name: App-financeta
 no_index:
   directory:
     - t
+    - share
 provides:
   App::financeta:
-    file: lib/App.pm
-    version: 0.07
-  PDL::Finance::TA:
-    file: lib/TA.pm
-    version: 0.07
-  PDL::Finance::TA::Indicators:
-    file: lib/TA/Indicators.pm
-    version: 0.07
-  PDL::Finance::TA::Mo:
-    file: lib/TA/Mo.pm
-    version: 0.07
+    file: lib/App/financeta.pm
+    version: 0.08
+  App::financeta::gui:
+    file: lib/App/financeta/gui.pm
+    version: 0.08
+  App::financeta::indicators:
+    file: lib/App/financeta/indicators.pm
+    version: 0.08
+  App::financeta::mo:
+    file: lib/App/financeta/mo.pm
+    version: 0.08
 requires:
   Capture::Tiny: 0
   Carp: 0
   Data::Dumper: 0
   DateTime: 0
   DateTime::Format::Strptime: 0
+  File::ShareDir: 1.00
   File::Spec: 0
   Finance::QuoteHist: 1.2
   Getopt::Long: 0
@@ -58,4 +61,4 @@ resources:
   bugtracker: https://github.com/vikasnkumar/financeta/issues
   license: http://www.gnu.org/licenses/old-licenses/gpl-1.0.txt
   repository: https://github.com/vikasnkumar/financeta
-version: 0.07
+version: 0.08

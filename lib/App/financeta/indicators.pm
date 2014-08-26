@@ -1,13 +1,13 @@
-package PDL::Finance::TA::Indicators;
+package App::financeta::indicators;
 use strict;
 use warnings;
 use 5.10.0;
 use feature 'say';
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 $VERSION = eval $VERSION;
 
-use PDL::Finance::TA::Mo;
+use App::financeta::mo;
 use Carp;
 use PDL::Lite;
 use PDL::NiceSlice;
@@ -19,16 +19,16 @@ has debug => 0;
 has plot_engine => 'gnuplot';
 has color_idx => 0;
 has colors => [qw(
-    blue
+    red
+    yellow
     pink
     green
-    white
     cyan
-    yellow
     violet
     magenta
     purple
     brown
+    blue
     gold
     goldenrod
     dark-orange
@@ -40,7 +40,6 @@ has colors => [qw(
     dark-yellow
     dark-red
     antiquewhite
-    red
     dark-spring-green
     royalblue
     web-green
@@ -117,10 +116,13 @@ sub _plot_gnuplot_general {
     foreach (@$output) {
         my $p = $_->[1];
         my %legend = (legend => $_->[0]) if length $_->[0];
+        my $args = $_->[2] || {};
+        say Dumper($args) if $self->debug;
         push @plotinfo, {
             with => 'lines',
             %legend,
             linecolor => $self->next_color,
+            %$args,
         }, $xdata, $p;
     }
     return @plotinfo;
@@ -370,7 +372,7 @@ has overlaps => {
         gnuplot => \&_plot_gnuplot_general,
     },
     sar => {
-        name => 'Parabolic SAR',
+        name => 'Parabolic Stop And Reverse (SAR)',
         params => [
             # key, pretty name, type, default value
             [ 'InAcceleration', 'Acceleration Factor(>= 0)', PDL::double, 0.02],
@@ -382,13 +384,13 @@ has overlaps => {
             say "Executing ta_sar parameters: ", Dumper(\@args) if $obj->debug;
             my $outpdl = PDL::ta_sar($highpdl, $lowpdl, @args);
             return [
-                ["SAR", $outpdl],
+                ["SAR", $outpdl, {with => 'points pointtype 7'}], #bug in P:G:G
             ];
         },
         gnuplot => \&_plot_gnuplot_general,
     },
     sarext => {
-        name => 'Parabolic SAR - Extended',
+        name => 'Parabolic Stop And Reverse (SAR) - Extended',
         params => [
             # key, pretty name, type, default value
             [ 'InStartValue', 'Start Value', PDL::double, 0.0],
@@ -406,7 +408,7 @@ has overlaps => {
             say "Executing ta_sarext parameters: ", Dumper(\@args) if $obj->debug;
             my $outpdl = PDL::ta_sarext($highpdl, $lowpdl, @args);
             return [
-                ["SAR-EXT", $outpdl],
+                ["SAR-EXT", $outpdl, {with => 'points pointtype 7'}], # bug in P:G:G
             ];
         },
         gnuplot => \&_plot_gnuplot_general,
@@ -1347,7 +1349,7 @@ has cycle => {
 
 has volume => {
     ad => {
-        name => 'Chaikin A/D line',
+        name => 'Chaikin Accumulation/Distribution line',
         params => [
             # no params
         ],
@@ -1363,7 +1365,7 @@ has volume => {
         gnuplot => \&_plot_gnuplot_general,
     },
     adosc => {
-        name => 'Chaikin A/D Oscillator',
+        name => 'Chaikin Accumulation/Distribution Oscillator',
         params => [
             # key, pretty name, type, default value
             [ 'InFastPeriod', 'Fast MA Period Window (2 - 100000)', PDL::long, 3],

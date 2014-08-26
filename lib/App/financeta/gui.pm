@@ -1,15 +1,16 @@
-package PDL::Finance::TA;
+package App::financeta::gui;
 use strict;
 use warnings;
 use 5.10.0;
 use feature 'say';
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 $VERSION = eval $VERSION;
 
-use PDL::Finance::TA::Mo;
+use App::financeta::mo;
 use Carp;
 use File::Spec;
+use File::ShareDir 'dist_file';
 use DateTime;
 use POE 'Loop::Prima';
 use Prima qw(
@@ -24,7 +25,7 @@ use PDL::Lite;
 use PDL::IO::Misc;
 use PDL::NiceSlice;
 use PDL::Graphics::Gnuplot;
-use PDL::Finance::TA::Indicators;
+use App::financeta::indicators;
 use Scalar::Util qw(blessed);
 
 $PDL::doubleformat = "%0.6lf";
@@ -44,17 +45,13 @@ has indicator => (builder => '_build_indicator');
 
 sub _build_indicator {
     my $self = shift;
-    return PDL::Finance::TA::Indicators->new(debug => $self->debug,
+    return App::financeta::indicators->new(debug => $self->debug,
                                             plot_engine => $self->plot_engine);
 }
 
 sub _build_icon {
     my $self = shift;
-    my $pkg = __PACKAGE__ . '.pm';
-    $pkg =~ s|::|/|g;
-    my $pkgpath = File::Spec->canonpath(File::Spec->rel2abs($INC{$pkg}));
-    $pkgpath =~ s|\.pm$||g;
-    my $icon_path = File::Spec->catfile($pkgpath, 'images', 'icon.gif');
+    my $icon_path = dist_file('App-financeta', 'icon.gif');
     my $icon = Prima::Icon->create;
     say "Icon path: $icon_path" if $self->debug;
     $icon->load($icon_path) or carp "Unable to load $icon_path";
@@ -101,7 +98,7 @@ sub _menu_items {
                             if (defined $data) {
                                 $gui->display_data($win, $data);
                                 my $type = $gui->current->{plot_type} || 'OHLC';
-                                $gui->plot_data($win, $data, $symbol);
+                                $gui->plot_data($win, $data, $symbol, $type);
                             }
                             $win->menu->plot_ohlc->enabled(1);
                             $win->menu->plot_ohlcv->enabled(1);
@@ -548,7 +545,7 @@ sub add_indicator($$$) {
         }
         $self->display_data($win, $data, $symbol, $iref, $output);
         my ($ndata, $nsymbol, $indicators) = $self->get_tab_data($win);
-        my $type = $self->current->{plot_type} || 'CLOSE';
+        my $type = $self->current->{plot_type} || 'OHLC';
         $self->plot_data($win, $ndata, $nsymbol, $type, $indicators);
     }
 }
@@ -862,8 +859,6 @@ sub indicator_wizard {
         origin => [20, 60],
         font => { height => 16, style => fs::Bold },
     );
-
-    #TODO:
     my $res = $w->execute();
     $w->end_modal;
     return $res == mb::Ok;
@@ -950,7 +945,7 @@ sub display_data {
                 return if $oldidx == $newidx;
                 # ok find the detailed-list object and use it
                 my ($data, $symbol, $indicators) = $self->_get_tab_data($w, $newidx);
-                my $type = $self->current->{plot_type} || 'CLOSE';
+                my $type = $self->current->{plot_type} || 'OHLC';
                 $self->plot_data($owner, $data, $symbol, $type, $indicators);
             },
         );
@@ -1090,8 +1085,7 @@ sub plot_data_gnuplot {
     } elsif ($^O =~ /Win32|Cygwin/i) {
         Capture::Tiny::capture {
             my @terms = PDL::Graphics::Gnuplot::terminfo();
-            $term = 'windows' if grep {/windows/} @terms;
-            $term = 'wxt' if grep {/wxt/} @terms;
+            $term = (grep {/windows/} @terms) > 0 ? 'windows' : 'wxt';
         };
     }
     say "Using term $term" if $self->debug;
@@ -1127,7 +1121,7 @@ sub plot_data_gnuplot {
                 },
                 {
                     with => 'financebars',
-                    linecolor => 'red',
+                    linecolor => 'white',
                     legend => 'Price',
                 },
                 $data(,(0)), $data(,(1)), $data(,(2)), $data(,(3)), $data(,(4)),
@@ -1157,7 +1151,7 @@ sub plot_data_gnuplot {
                 },
                 {
                     with => 'financebars',
-                    linecolor => 'red',
+                    linecolor => 'white',
                     legend => 'Price',
                 },
                 $data(,(0)), $data(,(1)), $data(,(2)), $data(,(3)), $data(,(4)),
@@ -1183,7 +1177,7 @@ sub plot_data_gnuplot {
                 {
                     with => 'impulses',
                     legend => 'Volume',
-                    linecolor => 'blue',
+                    linecolor => 'cyan',
                 },
                 $data(,(0)), $data(,(5)) / 1e6,
             );
@@ -1206,7 +1200,7 @@ sub plot_data_gnuplot {
                 },
                 {
                     with => 'candlesticks',
-                    linecolor => 'red',
+                    linecolor => 'white',
                     legend => 'Price',
                 },
                 $data(,(0)), $data(,(1)), $data(,(2)), $data(,(3)), $data(,(4)),
@@ -1237,7 +1231,7 @@ sub plot_data_gnuplot {
                 },
                 {
                     with => 'candlesticks',
-                    linecolor => 'red',
+                    linecolor => 'white',
                     legend => 'Price',
                 },
                 $data(,(0)), $data(,(1)), $data(,(2)), $data(,(3)), $data(,(4)),
@@ -1263,7 +1257,7 @@ sub plot_data_gnuplot {
                 {
                     with => 'impulses',
                     legend => 'Volume',
-                    linecolor => 'blue',
+                    linecolor => 'cyan',
                 },
                 $data(,(0)), $data(,(5)) / 1e6,
             );
@@ -1292,7 +1286,7 @@ sub plot_data_gnuplot {
                 },
                 {
                     with => 'lines',
-                    linecolor => 'red',
+                    linecolor => 'white',
                     legend => 'Close Price',
                 },
                 $data(,(0)), $data(,(4)),
@@ -1318,7 +1312,7 @@ sub plot_data_gnuplot {
                 {
                     with => 'impulses',
                     legend => 'Volume',
-                    linecolor => 'blue',
+                    linecolor => 'cyan',
                 },
                 $data(,(0)), $data(,(5)) / 1e6,
             );
@@ -1341,7 +1335,7 @@ sub plot_data_gnuplot {
                 },
                 {
                     with => 'lines',
-                    linecolor => 'red',
+                    linecolor => 'white',
                     legend => 'Close Price',
                 },
                 $data(,(0)), $data(,(4)),
