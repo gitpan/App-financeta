@@ -4,7 +4,7 @@ use warnings;
 use 5.10.0;
 use feature 'say';
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 $VERSION = eval $VERSION;
 
 use App::financeta::mo;
@@ -110,8 +110,39 @@ sub next_color {
 }
 
 sub _plot_gnuplot_general {
-    my ($self, $xdata, $output) = @_;
+    my ($self, $xdata, $output, $scale) = @_;
     # output is the same as the return value of the code-ref above
+    my @plotinfo = ();
+    foreach (@$output) {
+        my $p = (defined $scale) ? $_->[1] / $scale : $_->[1];
+        my %legend = (legend => $_->[0]) if length $_->[0];
+        my $args = $_->[2] || {};
+        say Dumper($args) if $self->debug;
+        push @plotinfo, {
+            with => 'lines',
+            axes => 'x1y1',
+            linecolor => $self->next_color,
+            %legend,
+            %$args,
+        }, $xdata, $p;
+    }
+    return wantarray ? @plotinfo : \@plotinfo;
+}
+
+sub _plot_gnuplot_volume {
+    my ($self, $xdata, $output) = @_;
+    my @plotinfo = $self->_plot_gnuplot_general($xdata, $output, 1e6);
+    return { volume => \@plotinfo };
+}
+
+sub _plot_gnuplot_additional {
+    my ($self, $xdata, $output) = @_;
+    my @plotinfo = $self->_plot_gnuplot_general($xdata, $output);
+    return { additional => \@plotinfo };
+}
+
+sub _plot_gnuplot_candlestick {
+    my ($self, $xdata, $output) = @_;
     my @plotinfo = ();
     foreach (@$output) {
         my $p = $_->[1];
@@ -119,20 +150,30 @@ sub _plot_gnuplot_general {
         my $args = $_->[2] || {};
         say Dumper($args) if $self->debug;
         push @plotinfo, {
-            with => 'lines',
-            %legend,
+            with => 'impulses',
+            axes => 'x1y2',
             linecolor => $self->next_color,
+            %legend,
             %$args,
         }, $xdata, $p;
     }
-    return @plotinfo;
+    return { candle => \@plotinfo };
 }
 
-sub _plot_gnuplot_candlestick {
+sub _plot_gnuplot_compare {
     my ($self, $xdata, $output) = @_;
-    my @plotinfo = ();
-    #TODO:
-    return @plotinfo;
+    if (scalar @$output >= 2) {
+        # we don't want to change the output variable itself
+        # otherwise the plots don't stay the same
+        my $o2 = [ @$output ]; # make a copy
+        my $o1 = pop @$o2;
+        my @g = $self->_plot_gnuplot_general($xdata, [$o1]);
+        my @a = $self->_plot_gnuplot_general($xdata, $o2);
+        return { general => \@g, additional => \@a };
+    } else {
+        my @a = $self->_plot_gnuplot_general($xdata, $output);
+        return { additional => \@a };
+    }
 }
 
 has ma_name => {
@@ -303,11 +344,10 @@ has overlaps => {
     },
     mavp => {
         name => 'Moving Average with Variable Period',
-        #TODO: support this kind of indicator
-        input => [qw/close periods/],
+        input => [qw/close/],
         params => [
             # key, pretty name, type, default value
-            [ 'InPeriods', 'List of periods', 'PDL', PDL::null],
+            [ 'InPeriods', 'List of periods (comma separated values)', 'PDL', ''],
             [ 'InMinPeriod', 'Minimum Period (2 - 100000)', PDL::long, 2],
             [ 'InMaxPeriod', 'Maximum Period (2 - 100000)', PDL::long, 30],
             # this will show up in a combo list
@@ -327,8 +367,25 @@ has overlaps => {
         ],
         code => sub {
             my ($obj, $inpdl, $period_pdl, @args) = @_;
-            say "Executing ta_mavp with parameters: ", Dumper(\@args) if $obj->debug;
+            say "Executing ta_mavp with parameters: ", $period_pdl, "\t", Dumper(\@args) if $obj->debug;
             my $type = $obj->ma_name->{$args[2]} || 'UNKNOWN';
+            if ($period_pdl->isnull) {
+                carp "The list of periods cannot be null";
+                return;
+            }
+            # the period-pdl has to be the same size as the input-pdl
+            my @a = $period_pdl->list;
+            my $sz = $inpdl->dim(0); #1-D pdl
+            until (scalar(@a) >= $sz) {
+                my @b = $period_pdl->list;
+                push @a, @b;
+            }
+            splice @a, $sz;
+            $period_pdl = PDL->new(@a);
+            if ($period_pdl->dim(0) != $sz) {
+                carp "Sizes of the PDLs are not the same" if $period_pdl->dim(0) != $sz;
+                return;
+            }
             my $outpdl = PDL::ta_mavp($inpdl, $period_pdl, @args);
             return [
                 ["MAVP($type)", $outpdl],
@@ -407,8 +464,12 @@ has overlaps => {
             my ($obj, $highpdl, $lowpdl, @args) = @_;
             say "Executing ta_sarext parameters: ", Dumper(\@args) if $obj->debug;
             my $outpdl = PDL::ta_sarext($highpdl, $lowpdl, @args);
+            my $shortpdl = $outpdl;
+            $shortpdl = $shortpdl->setbadif($shortpdl > 0)->abs;
+            $outpdl = $outpdl->setbadif($outpdl < 0);
             return [
-                ["SAR-EXT", $outpdl, {with => 'points pointtype 7'}], # bug in P:G:G
+                ["SAR(long)", $outpdl, {with => 'points pointtype 7', linecolor => 'red'}], # bug in P:G:G
+                ["SAR(short)", $shortpdl, {with => 'points pointtype 7', linecolor => 'green'}], # bug in P:G:G
             ];
         },
         gnuplot => \&_plot_gnuplot_general,
@@ -538,7 +599,7 @@ has volatility => {
                 ["ATR($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     natr => {
         name => 'Normalized Average True Range',
@@ -556,7 +617,7 @@ has volatility => {
                 ["NATR($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     trange => {
         name => 'True Range',
@@ -572,7 +633,7 @@ has volatility => {
                 ["True Range", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
 };
 
@@ -593,7 +654,7 @@ has momentum => {
                 ["ADX($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     adxr => {
         name => 'Average Directional Movement Index Rating',
@@ -611,7 +672,7 @@ has momentum => {
                 ["ADX RATING($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     apo => {
         name => 'Absolute Price Oscillator',
@@ -642,7 +703,7 @@ has momentum => {
             my $type = $obj->ma_name->{$args[2]} || 'UNKNOWN';
             my $outpdl = PDL::ta_apo($inpdl, @args);
             return [
-                ["APO($fast,$slow)($type)", $outpdl],
+                ["APO($fast,$slow)($type)", $outpdl, { axes => 'x1y2' }],
             ];
         },
         gnuplot => \&_plot_gnuplot_general,
@@ -664,7 +725,7 @@ has momentum => {
                 ["AROON($period) UP", $aup],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     aroonosc => {
         name => 'Aroon Oscillator',
@@ -682,7 +743,7 @@ has momentum => {
                 ["AROON OSC($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     bop => {
         name => 'Balance Of Power',
@@ -698,7 +759,7 @@ has momentum => {
                 ["Balance of Power", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     cci => {
         name => 'Commodity Channel Index',
@@ -713,10 +774,10 @@ has momentum => {
             my $period = $args[0];
             my $outpdl = PDL::ta_cci($high, $low, $close, @args);
             return [
-                ["CCI($period)", $outpdl],
+                ["CCI($period)", $outpdl,],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     cmo => {
         name => 'Chande Momentum Oscillator',
@@ -733,7 +794,7 @@ has momentum => {
                 ["CMO($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     dx => {
         name => 'Directional Movement Index',
@@ -751,7 +812,7 @@ has momentum => {
                 ["DX($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     macd => {
         name => 'Moving Average Convergence/Divergence',
@@ -771,10 +832,10 @@ has momentum => {
             return [
                 ["MACD($fast/$slow/$signal)", $omacd],
                 ["MACD Signal($fast/$slow/$signal)", $omacdsig],
-                ["MACD Histogram($fast/$slow/$signal)", $omacdhist],
+                ["MACD Histogram($fast/$slow/$signal)", $omacdhist, { with => 'impulses' }],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     macdext => {
         name => 'MACD with different Mov. Avg',
@@ -836,10 +897,10 @@ has momentum => {
             return [
                 ["MACDEXT($fast/$slow/$signal)", $omacd],
                 ["MACDEXT Signal($fast/$slow/$signal)", $omacdsig],
-                ["MACDEXT Histogram($fast/$slow/$signal)", $omacdhist],
+                ["MACDEXT Histogram($fast/$slow/$signal)", $omacdhist, { with => 'impulses' }],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     macdfix => {
         name => 'MACD Fixed to 12/26',
@@ -855,10 +916,10 @@ has momentum => {
             return [
                 ["MACD(12/26/$signal)", $omacd],
                 ["MACD Signal(12/26/$signal)", $omacdsig],
-                ["MACD Histogram(12/26/$signal)", $omacdhist],
+                ["MACD Histogram(12/26/$signal)", $omacdhist, { with => 'impulses' }],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     mfi => {
         name => 'Money Flow Index',
@@ -876,7 +937,7 @@ has momentum => {
                 ["MFI($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     minus_di => {
         name => 'Minus Directional Indicator',
@@ -894,7 +955,7 @@ has momentum => {
                 ["MINUS-DI($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     minus_dm => {
         name => 'Minus Directional Movement',
@@ -912,7 +973,7 @@ has momentum => {
                 ["MINUS-DM($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     mom => {
         name => 'Momentum',
@@ -929,7 +990,7 @@ has momentum => {
                 ["MOM($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     plus_di => {
         name => 'Plus Directional Indicator',
@@ -947,7 +1008,7 @@ has momentum => {
                 ["PLUS-DI($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     plus_dm => {
         name => 'Plus Directional Indicator',
@@ -965,7 +1026,7 @@ has momentum => {
                 ["PLUS-DM($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     ppo => {
         name => 'Percentage Price Oscillator',
@@ -999,7 +1060,7 @@ has momentum => {
                 ["PPO($fast/$slow)($type)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     roc => {
         name => 'Rate of Change',
@@ -1016,7 +1077,7 @@ has momentum => {
                 ["ROC($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     rocp => {
         name => 'Rate of Change Precentage',
@@ -1033,7 +1094,7 @@ has momentum => {
                 ["ROCP($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     rocr => {
         name => 'Rate of Change Ratio',
@@ -1050,7 +1111,7 @@ has momentum => {
                 ["ROCR($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     rocr100 => {
         name => 'Rate of Change Ratio - scale 100',
@@ -1067,7 +1128,7 @@ has momentum => {
                 ["ROCR*100($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     rsi => {
         name => 'Relative Strength Index',
@@ -1084,7 +1145,7 @@ has momentum => {
                 ["RSI($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     stoch => {
         name => 'Stochastic',
@@ -1134,7 +1195,7 @@ has momentum => {
                 ["Slow-D($slowD)", $oslowD],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     stochf => {
         name => 'Stochastic Fast',
@@ -1169,7 +1230,7 @@ has momentum => {
                 ["Fast-D($fastD)", $ofastD],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     stochrsi => {
         name => 'Stochastic Relative Strength Index',
@@ -1206,7 +1267,7 @@ has momentum => {
                 ["Fast-D($fastD, $period)", $ofastD],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     trix => {
         name => '1-day ROC of Triple Smooth EMA',
@@ -1223,7 +1284,7 @@ has momentum => {
                 ["TRIX($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     ultosc => {
         name => 'Ultimate Oscillator',
@@ -1245,7 +1306,7 @@ has momentum => {
                 ["ULT.OSC.($p1/$p2/$p3)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     willr => {
         name => q/Williams' %R/,
@@ -1263,7 +1324,7 @@ has momentum => {
                 ["WILLR($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
 };
 
@@ -1278,7 +1339,7 @@ has cycle => {
             say "Executing ta_ht_dcperiod" if $obj->debug;
             my $outpdl = PDL::ta_ht_dcperiod($inpdl);
             return [
-                ['HT-DCperiod', $outpdl],
+                ['HT-DCperiod', $outpdl, { axes => 'x1y2' }],
             ];
         },
         gnuplot => \&_plot_gnuplot_general,
@@ -1293,10 +1354,10 @@ has cycle => {
             say "Executing ta_ht_dcphase" if $obj->debug;
             my $outpdl = PDL::ta_ht_dcphase($inpdl);
             return [
-                ['HT-DCperiod', $outpdl],
+                ['HT-DCphase', $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     ht_phasor => {
         name => 'Hilbert Transform - Phasor Components',
@@ -1305,14 +1366,14 @@ has cycle => {
         ],
         code => sub {
             my ($obj, $inpdl) = @_;
-            say "Executing ta_ht_dcphasor" if $obj->debug;
-            my ($oinphase, $oquad) = PDL::ta_ht_dcphasor($inpdl);
+            say "Executing ta_ht_phasor" if $obj->debug;
+            my ($oinphase, $oquad) = PDL::ta_ht_phasor($inpdl);
             return [
                 ['HT-InPhase', $oinphase],
                 ['HT-Quadrature', $oquad],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     ht_sine => {
         name => 'Hilbert Transform - Sine Wave',
@@ -1324,11 +1385,11 @@ has cycle => {
             say "Executing ta_ht_sine" if $obj->debug;
             my ($osine, $oleadsine) = PDL::ta_ht_sine($inpdl);
             return [
-                ['HT-Sine', $osine],
-                ['HT-LeadSine', $oleadsine],
+                ['HT-Sine', $osine, { axes => 'x1y2' }],
+                ['HT-LeadSine', $oleadsine, { axes => 'x1y2' }],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     ht_trendmode => {
         name => 'Hilbert Transform - Trend vs Cycle Mode',
@@ -1340,10 +1401,10 @@ has cycle => {
             say "Executing ta_ht_trendmode" if $obj->debug;
             my $outpdl = PDL::ta_ht_trendmode($inpdl);
             return [
-                ['HT-Trend vs Cycle', $outpdl],
+                ['HT-Trend vs Cycle', $outpdl, { with => 'impulses', axes => 'x1y2' },],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
 };
 
@@ -1362,7 +1423,7 @@ has volume => {
                 ["Chaikin A/D", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_volume,
     },
     adosc => {
         name => 'Chaikin Accumulation/Distribution Oscillator',
@@ -1382,7 +1443,7 @@ has volume => {
                 ["Chaikin A/D($fast,$slow)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_volume,
     },
     obv => {
         name => 'On Balance Volume',
@@ -1398,7 +1459,7 @@ has volume => {
                 ["OBV", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_volume,
     },
 };
 
@@ -1873,38 +1934,50 @@ has statistic => {
         params => [
             # key, pretty name, type, default value
             [ 'InTimePeriod', 'Period Window (1 - 100000)', PDL::long, 5],
+            # this is a special key and if you change this will break
+            # functionality in the gui.pm file.
+            [ 'CompareWith', 'Compare With Security', PDL::byte, '' ],
         ],
-        #TODO: support this type of indicator
-        input => [qw/close1 close2/],
+        input => [qw/close/],
         code => sub {
-            my ($obj, $inpdl1, $inpdl2, @args) = @_;
-            say "Executing ta_beta with parameters", Dumper(\@args) if $obj->debug;
-            my $period = $args[0];
-            my $outpdl = PDL::ta_beta($inpdl1, $inpdl2, @args);
+            my ($obj, $inpdl1, $inpdl2, $period, $name) = @_;
+            say "Executing ta_beta with parameters: $period and $name" if $obj->debug;
+            if ($inpdl1->dim(0) != $inpdl2->dim(0)) {
+                carp "Cannot compare unless the sizes of the PDLs are same";
+                return;
+            }
+            my $outpdl = PDL::ta_beta($inpdl1, $inpdl2, $period);
             return [
                 ["BETA($period)", $outpdl],
+                [$name, $inpdl2, { axes => 'x1y2' }],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_compare,
     },
     correl => {
         name => q/Pearson's Correlation Coefficient/,
         params => [
             # key, pretty name, type, default value
             [ 'InTimePeriod', 'Period Window (1 - 100000)', PDL::long, 5],
+            # this is a special key and if you change this will break
+            # functionality in the gui.pm file.
+            [ 'CompareWith', 'Compare With Security', PDL::byte, '' ],
         ],
-        #TODO: support this type of indicator
-        input => [qw/close1 close2/],
+        input => [qw/close/],
         code => sub {
-            my ($obj, $inpdl1, $inpdl2, @args) = @_;
-            say "Executing ta_correl with parameters", Dumper(\@args) if $obj->debug;
-            my $period = $args[0];
-            my $outpdl = PDL::ta_correl($inpdl1, $inpdl2, @args);
+            my ($obj, $inpdl1, $inpdl2, $period, $name) = @_;
+            say "Executing ta_beta with parameters: $period and $name" if $obj->debug;
+            if ($inpdl1->dim(0) != $inpdl2->dim(0)) {
+                carp "Cannot compare unless the sizes of the PDLs are same";
+                return;
+            }
+            my $outpdl = PDL::ta_correl($inpdl1, $inpdl2, $period);
             return [
                 ["CORRELATION($period)", $outpdl],
+                [$name, $inpdl2, { axes => 'x1y2' }],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_compare,
     },
     linearreg => {
         name => 'Linear Regression',
@@ -1935,7 +2008,7 @@ has statistic => {
             my $period = $args[0];
             my $outpdl = PDL::ta_linearreg_angle($inpdl, @args);
             return [
-                ["REGRESSION ANGLE($period)", $outpdl],
+                ["REGRESSION ANGLE($period)", $outpdl, { axes => 'x1y2' }],
             ];
         },
         gnuplot => \&_plot_gnuplot_general,
@@ -1969,10 +2042,10 @@ has statistic => {
             my $period = $args[0];
             my $outpdl = PDL::ta_linearreg_slope($inpdl, @args);
             return [
-                ["REGRESSION SLOPE($period)", $outpdl],
+                ["REGRESSION SLOPE($period)", $outpdl, { axes => 'x1y2' }],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     stddev => {
         name => 'Standard Deviation',
@@ -1991,7 +2064,7 @@ has statistic => {
                 ["$num x STD.DEV.($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
     tsf => {
         name => 'Timeseries Forecast',
@@ -2027,7 +2100,7 @@ has statistic => {
                 ["$num x VARIANCE($period)", $outpdl],
             ];
         },
-        gnuplot => \&_plot_gnuplot_general,
+        gnuplot => \&_plot_gnuplot_additional,
     },
 };
 
@@ -2174,7 +2247,7 @@ sub _find_func_key($$) {
     my $fn_name = $iref->{func};
     my $fn_key;
     my $grp = $self->group_key->{$iref->{group}} if defined $iref->{group};
-    if (defined $grp and $self->has($grp)) {
+    if (defined $grp and $self->has($grp) and $fn_name) {
         my $r = $self->$grp;
         foreach my $k (sort (keys %$r)) {
             $fn_key = $k if $r->{$k}->{name} eq $fn_name;
@@ -2182,12 +2255,12 @@ sub _find_func_key($$) {
         }
     }
     return unless defined $fn_key;
-    say "Found $fn_key" if $self->debug;
+    say "Found function key: $fn_key" if $self->debug;
     return $fn_key;
 }
 
 sub execute_ohlcv($$) {
-    my ($self, $data, $iref) = @_;
+    my ($self, $data, $iref, $data2) = @_;
     return unless ref $data eq 'PDL';
     my $fn_key = $self->_find_func_key($iref);
     return unless defined $fn_key;
@@ -2205,6 +2278,15 @@ sub execute_ohlcv($$) {
         if (exists $params->{$k . '_index'}) {
             # handle ARRAY
             push @args, $params->{$k . '_index'};
+        } elsif (exists $params->{$k . '_pdl'}) {
+            my $csv = $params->{$k};
+            $csv =~ s/\s//g if length $csv;
+            my @a = split /,/, $csv if length $csv;
+            push @args, PDL->new(@a) if @a;
+            push @args, PDL::null unless @a;
+        } elsif ($k =~ /CompareWith/i) {
+            # dont eval it
+            push @args, $params->{$k};
         } else {
             push @args, eval $params->{$k};
         }
@@ -2220,6 +2302,10 @@ sub execute_ohlcv($$) {
         push @input_pdls, $data(,(4)) if $_ eq 'close';
         push @input_pdls, $data(,(5)) if $_ eq 'volume';
     }
+    if (defined $data2 and ref $data2 eq 'PDL') {
+        push @input_pdls, $data2(,(4)); # always use close
+        say "Adding close2 price" if $self->debug;
+    }
     unless (scalar @input_pdls) {
         carp "These input columns are not supported yet: ", Dumper($input_cols);
         return;
@@ -2234,6 +2320,7 @@ sub get_plot_args($$$) {
     my $grp = $self->group_key->{$iref->{group}} if defined $iref->{group};
     return unless defined $grp;
     my $plotref = $self->$grp->{$fn_key}->{lc($self->plot_engine)};
+    carp "There is no plotting function available for $fn_key" unless ref $plotref eq 'CODE';
     return &$plotref($self, $xdata, $output) if ref $plotref eq 'CODE';
 }
 

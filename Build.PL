@@ -11,8 +11,6 @@ my $build = Module::Build->new(
     create_readme => 0,
     configure_requires => {
         'Module::Build' => 0,
-        'Software::License' => 0,
-        'Pod::Readme' => 0,
     },
     build_requires => {
         'Module::Build' => 0,
@@ -30,13 +28,14 @@ my $build = Module::Build->new(
         'DateTime' => 0,
         'Finance::QuoteHist' => 1.20,
         'PDL::Finance::Talib' => '0.006',
-        'Prima' => 1.39,
+        'Prima' => 1.40,
         'DateTime::Format::Strptime' => 0,
         'POE::Loop::Prima' => 0,
         'PDL::Graphics::Gnuplot' => 0,
         'Capture::Tiny' => 0,
         'Scalar::Util' => 0,
         'Getopt::Long' => 0,
+        'Browser::Open' => 0,
     },
     dynamic_config => 1,
     add_to_cleanup => [ qw/*.bak _Inline/ ],
@@ -54,7 +53,6 @@ my $build = Module::Build->new(
     installdirs => ($^O =~ /Darwin/i) ? 'core' : 'site',
 );
 
-$build->add_build_element('image');
 $build->create_build_script;
 $build->dispatch('distmeta');
 $build->dispatch('manifest');

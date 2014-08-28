@@ -9,8 +9,6 @@ build_requires:
   Test::More: 0
 configure_requires:
   Module::Build: 0
-  Pod::Readme: 0
-  Software::License: 0
 dynamic_config: 1
 generated_by: 'Module::Build version 0.4207, CPAN::Meta::Converter version 2.132661'
 keywords:
@@ -30,17 +28,18 @@ no_index:
 provides:
   App::financeta:
     file: lib/App/financeta.pm
-    version: 0.08
+    version: 0.09
   App::financeta::gui:
     file: lib/App/financeta/gui.pm
-    version: 0.08
+    version: 0.09
   App::financeta::indicators:
     file: lib/App/financeta/indicators.pm
-    version: 0.08
+    version: 0.09
   App::financeta::mo:
     file: lib/App/financeta/mo.pm
-    version: 0.08
+    version: 0.09
 requires:
+  Browser::Open: 0
   Capture::Tiny: 0
   Carp: 0
   Data::Dumper: 0
@@ -54,11 +53,11 @@ requires:
   PDL::Finance::Talib: 0.006
   PDL::Graphics::Gnuplot: 0
   POE::Loop::Prima: 0
-  Prima: 1.39
+  Prima: 1.4
   Scalar::Util: 0
   perl: v5.10.0
 resources:
   bugtracker: https://github.com/vikasnkumar/financeta/issues
   license: http://www.gnu.org/licenses/old-licenses/gpl-1.0.txt
   repository: https://github.com/vikasnkumar/financeta
-version: 0.08
+version: 0.09
