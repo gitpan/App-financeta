@@ -47,16 +47,21 @@
             "Data::Dumper" : "0",
             "DateTime" : "0",
             "DateTime::Format::Strptime" : "0",
+            "File::HomeDir" : "0",
+            "File::Path" : "0",
             "File::ShareDir" : "1.00",
             "File::Spec" : "0",
             "Finance::QuoteHist" : "1.2",
             "Getopt::Long" : "0",
             "PDL" : "2.007",
-            "PDL::Finance::Talib" : "0.006",
+            "PDL::Finance::TA" : "0.008",
             "PDL::Graphics::Gnuplot" : "0",
             "POE::Loop::Prima" : "0",
-            "Prima" : "1.4",
+            "POSIX" : "0",
+            "Pegex" : "0.55",
+            "Prima" : "1.40_1",
             "Scalar::Util" : "0",
+            "YAML::Any" : "0",
             "perl" : "v5.10.0"
          }
       }
@@ -64,19 +69,35 @@
    "provides" : {
       "App::financeta" : {
          "file" : "lib/App/financeta.pm",
-         "version" : "0.09"
+         "version" : "0.10"
+      },
+      "App::financeta::editor" : {
+         "file" : "lib/App/financeta/editor.pm",
+         "version" : "0.10"
       },
       "App::financeta::gui" : {
          "file" : "lib/App/financeta/gui.pm",
-         "version" : "0.09"
+         "version" : "0.10"
       },
       "App::financeta::indicators" : {
          "file" : "lib/App/financeta/indicators.pm",
-         "version" : "0.09"
+         "version" : "0.10"
+      },
+      "App::financeta::language" : {
+         "file" : "lib/App/financeta/language.pm",
+         "version" : "0.10"
+      },
+      "App::financeta::language::grammar" : {
+         "file" : "lib/App/financeta/language.pm",
+         "version" : "0.10"
+      },
+      "App::financeta::language::receiver" : {
+         "file" : "lib/App/financeta/language.pm",
+         "version" : "0.10"
       },
       "App::financeta::mo" : {
          "file" : "lib/App/financeta/mo.pm",
-         "version" : "0.09"
+         "version" : "0.1"
       }
    },
    "release_status" : "stable",
@@ -91,5 +112,5 @@
          "url" : "https://github.com/vikasnkumar/financeta"
       }
    },
-   "version" : "0.09"
+   "version" : "0.10"
 }

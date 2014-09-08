@@ -4,18 +4,20 @@ use warnings;
 use 5.10.0;
 use feature 'say';
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 $VERSION = eval $VERSION;
 
 use App::financeta::mo;
 use Carp;
 use File::Spec;
+use File::HomeDir;
+use File::Path ();
 use File::ShareDir 'dist_file';
 use DateTime;
 use POE 'Loop::Prima';
 use Prima qw(
     Application Buttons MsgBox Calendar ComboBox Notebooks
-    ScrollWidget DetailedList
+    ScrollWidget DetailedList StdDlg
 );
 use Prima::Utils ();
 use Data::Dumper;
@@ -26,28 +28,46 @@ use PDL::IO::Misc;
 use PDL::NiceSlice;
 use PDL::Graphics::Gnuplot;
 use App::financeta::indicators;
+use App::financeta::editor;
 use Scalar::Util qw(blessed);
 use Browser::Open ();
+use YAML::Any ();
 
 $PDL::doubleformat = "%0.6lf";
 $| = 1;
 has debug => 0;
 has timezone => 'America/New_York';
-has brand => (default => sub { __PACKAGE__ });
+has brand => __PACKAGE__;
 has main => (builder => '_build_main');
 has icon => (builder => '_build_icon');
 has tmpdir => ( default => sub {
     return $ENV{TEMP} || $ENV{TMP} if $^O =~ /Win32|Cygwin/i;
     return $ENV{TMPDIR} || '/tmp';
 });
+has datadir => ( default => sub {
+    my $dir = $ENV{DATADIR} || File::Spec->catfile(File::HomeDir->my_home, '.financeta');
+    File::Path::make_path($dir) unless -d $dir;
+    return $dir;
+});
 has plot_engine => 'gnuplot';
 has current => {};
 has indicator => (builder => '_build_indicator');
+has tab_was_closed => 0;
+has editors => {};
 
 sub _build_indicator {
     my $self = shift;
     return App::financeta::indicators->new(debug => $self->debug,
                                             plot_engine => $self->plot_engine);
+}
+
+sub _build_editor {
+    my $self = shift;
+    my $name = shift || '';
+    $name =~ s/tab_//g if length $name;
+    return App::financeta::editor->new(debug => $self->debug,
+        parent => $self, icon => $self->icon,
+        brand => $self->brand . " Rules Editor for $name");
 }
 
 sub _build_icon {
@@ -86,29 +106,54 @@ sub _menu_items {
         [
             '~Security' => [
                 [
-                    'security_wizard', '~New', 'Ctrl+N', '^N',
+                    'security_new', '~New', 'Ctrl+N', '^N',
                     sub {
                         my ($win, $item) = @_;
                         my $gui = $win->menu->data($item);
                         if ($gui->security_wizard($win)) {
                             my $bar = $gui->progress_bar_create($win, 'Downloading...');
                             # download security data
-                            my ($data, $symbol) = $gui->download_data($bar);
+                            my ($data, $symbol, $csv) = $gui->download_data($bar);
                             if (defined $data) {
                                 $gui->display_data($win, $data);
+                                my ($info, $tname) = $gui->get_tab_info($win);
+                                if ($info and $csv) {
+                                    $info->{csv} = $csv;
+                                    $gui->set_tab_info($win, $info);
+                                }
                                 my $type = $gui->current->{plot_type} || 'OHLC';
                                 $gui->plot_data($win, $data, $symbol, $type);
-                                $win->menu->security_close->enabled(1);
-                                $win->menu->plot_ohlc->enabled(1);
-                                $win->menu->plot_ohlcv->enabled(1);
-                                $win->menu->plot_close->enabled(1);
-                                $win->menu->plot_closev->enabled(1);
-                                $win->menu->plot_cdl->enabled(1);
-                                $win->menu->plot_cdlv->enabled(1);
-                                $win->menu->add_indicator->enabled(1);
+                                $gui->enable_menu_options($win);
                             }
                             $gui->progress_bar_close($bar);
                         }
+                    },
+                    $self,
+                ],
+                [
+                    'security_open', '~Open', 'Ctrl+O', '^O',
+                    sub {
+                        my ($win, $item) = @_;
+                        my $gui = $win->menu->data($item);
+                        $gui->load_new_tab($win);
+                    },
+                    $self,
+                ],
+                [
+                    '-security_save', '~Save', 'Ctrl+S', '^S',
+                    sub {
+                        my ($win, $item) = @_;
+                        my $gui = $win->menu->data($item);
+                        $gui->save_current_tab($win, 0);
+                    },
+                    $self,
+                ],
+                [
+                    '-security_saveas', 'Save As', '', '',
+                    sub {
+                        my ($win, $item) = @_;
+                        my $gui = $win->menu->data($item);
+                        $gui->save_current_tab($win, 1);
                     },
                     $self,
                 ],
@@ -258,6 +303,16 @@ sub _menu_items {
                     },
                     $self,
                 ],
+                [
+                    '-edit_rules', 'Add/Edit Rules', 'Ctrl+E', '^E',
+                    sub {
+                        my ($win, $item) = @_;
+                        my $gui = $win->menu->data($item);
+                        my ($info, $tabname) = $self->get_tab_info($win);
+                        $self->open_editor($info->{rules}, $tabname);
+                    },
+                    $self,
+                ],
             ],
         ],
         [
@@ -305,7 +360,7 @@ sub run {
 
 sub progress_bar_create {
     my ($self, $win, $text) = @_;
-    $text = 'Loading...' unless length $text;
+    $text = $text || 'Loading...';
     my $bar = Prima::Window->create(
         name => 'progress_bar',
         text => $text,
@@ -505,6 +560,48 @@ sub security_wizard {
         },
     );
     $w->insert(
+        Button => name => 'btn_csv',
+        text => 'Load from CSV',
+        autoHeight => 1,
+        autoWidth => 1,
+        origin => [ 20, 120 ],
+        default => 0,
+        enabled => 1,
+        font => { height => 16, style => fs::Bold },
+        onClick => sub {
+            my $btn = shift;
+            my $owner = $btn->owner;
+            $owner->hide;
+            my $dlg = Prima::OpenDialog->new(
+                defaultExt => 'csv',
+                filter => [
+                    ['CSV files' => '*.csv'],
+                    ['All files' => '*'],
+                ],
+                filterIndex => 0,
+                fileMustExist => 1,
+                multiSelect => 0,
+                directory => $self->tmpdir,
+            );
+            my $csv = $dlg->fileName if $dlg->execute;
+            if (defined $csv and -e $csv) {
+                say "You have selected $csv to load" if $self->debug;
+                $owner->label_csv->text($csv);
+                $self->current->{csv} = $csv;
+            }
+            $owner->show;
+        },
+    );
+    $w->insert(
+        Label => text => '',
+        name => 'label_csv',
+        alignment => ta::Left,
+        autoHeight => 1,
+        autoWidth => 1,
+        origin => [ 20, 90 ],
+        font => { height => 13, style => fs::Bold },
+    );
+    $w->insert(
         Button => name => 'btn_cancel',
         text => 'Cancel',
         autoHeight => 1,
@@ -519,6 +616,7 @@ sub security_wizard {
             delete $self->current->{start_date};
             delete $self->current->{end_date};
             delete $self->current->{force_download};
+            delete $self->current->{csv};
         },
     );
     $w->insert(
@@ -768,7 +866,7 @@ sub remove_indicator_wizard {
             } else {
                 carp "Invalid indicators for tab: ", $result->{tab};
             }
-            say Dumper($result) if $self->debug;
+            say "Result: ", Dumper($result) if $self->debug;
         },
     );
     my $res = $w->execute();
@@ -776,52 +874,66 @@ sub remove_indicator_wizard {
     return ($res == mb::Ok) ? $result : undef;
 }
 
+sub run_and_display_indicator {
+    my ($self, $win, $data, $symbol, $indicators) = @_;
+    return unless $win;
+    if (defined $data and defined $symbol and defined $indicators and
+        ref $indicators eq 'ARRAY') {
+        foreach my $iref (@$indicators) {
+            say "Trying to run indicator for :", Dumper($iref) if $self->debug;
+            my $output;
+            if (exists $iref->{params} and exists $iref->{params}->{CompareWith}) {
+                # ok this is a security.
+                # we need to download the data for this and store it
+                my $bar = $self->progress_bar_create($win, 'Downloading...');
+                my $current = $self->current;
+                $iref->{params}->{CompareWith} =~ s/\s//g;
+                $current->{symbol} = $iref->{params}->{CompareWith};
+                my $tz = $self->timezone;
+                unless ($current->{start_date}) {
+                    my $sd = $data->at(0, 0); # time in 0th column
+                    my $dt = DateTime->from_epoch(epoch => $sd, time_zone => $tz);
+                    $current->{start_date} = $dt;
+                }
+                unless ($current->{end_date}) {
+                    my $ed = $data->at($data->dim(0) - 1, 0); # time in 0th column
+                    my $dt = DateTime->from_epoch(epoch => $ed, time_zone => $tz);
+                    $current->{end_date} = $dt;
+                }
+                my ($data2, $symbol2, $csv2) = $self->download_data($bar, $current);
+                $self->progress_bar_close($bar);
+                return unless (defined $data2 and defined $symbol2);
+                say "Successfully downloaded data for $symbol2" if $self->debug;
+                $iref->{params}->{CompareWith} = $symbol2;
+                $output = $self->indicator->execute_ohlcv($data, $iref, $data2);
+            } else {
+                $output = $self->indicator->execute_ohlcv($data, $iref);
+            }
+            unless (defined $output) {
+                message_box('Indicator Error',
+                    "Unable to run the indicator on data.",
+                    mb::Ok | mb::Error);
+                return;
+            }
+            $self->display_data($win, $data, $symbol, $iref, $output);
+        }
+        return 1;
+    }
+    return 0;
+}
+
 sub add_indicator($$$) {
     my ($self, $win, $data, $symbol) = @_;
     if ($self->add_indicator_wizard($win)) {
         my $iref = $self->current->{indicator};
-        say "Trying to run indicator for :", Dumper($iref) if $self->debug;
-        my $output;
-        if (exists $iref->{params} and exists $iref->{params}->{CompareWith}) {
-            # ok this is a security.
-            # we need to download the data for this and store it
-            my $bar = $self->progress_bar_create($win, 'Downloading...');
-            my $current = $self->current;
-            $iref->{params}->{CompareWith} =~ s/\s//g;
-            $current->{symbol} = $iref->{params}->{CompareWith};
-            my $tz = $self->timezone;
-            unless ($current->{start_date}) {
-                my $sd = $data->at(0, 0); # time in 0th column
-                my $dt = DateTime->from_epoch(epoch => $sd, time_zone => $tz);
-                $current->{start_date} = $dt;
-            }
-            unless ($current->{end_date}) {
-                my $ed = $data->at($data->dim(0) - 1, 0); # time in 0th column
-                my $dt = DateTime->from_epoch(epoch => $ed, time_zone => $tz);
-                $current->{end_date} = $dt;
-            }
-            my ($data2, $symbol2) = $self->download_data($bar, $current);
-            $self->progress_bar_close($bar);
-            return unless (defined $data2 and defined $symbol2);
-            say "Successfully downloaded data for $symbol2" if $self->debug;
-            $iref->{params}->{CompareWith} = $symbol2;
-            $output = $self->indicator->execute_ohlcv($data, $iref, $data2);
-        } else {
-            $output = $self->indicator->execute_ohlcv($data, $iref);
+        if ($self->run_and_display_indicator($win, $data, $symbol, [$iref])) {
+            my ($ndata, $nsymbol, $indicators) = $self->get_tab_data($win);
+            my $type = $self->current->{plot_type} || 'OHLC';
+            $self->plot_data($win, $ndata, $nsymbol, $type, $indicators);
+            return 1;
         }
-        unless (defined $output) {
-            message_box('Indicator Error',
-                "Unable to run the indicator on data.",
-                mb::Ok | mb::Error);
-            return;
-        }
-        $self->display_data($win, $data, $symbol, $iref, $output);
-        my ($ndata, $nsymbol, $indicators) = $self->get_tab_data($win);
-        my $type = $self->current->{plot_type} || 'OHLC';
-        $self->plot_data($win, $ndata, $nsymbol, $type, $indicators);
-        return 1;
     }
-    0;
+    return 0;
 }
 
 sub indicator_parameter_wizard {
@@ -1126,7 +1238,7 @@ sub add_indicator_wizard {
                 # $params is an array-ref
                 my $params = $self->indicator->get_params($txt, $grp);
                 $self->current->{indicator}->{func} = $txt;
-                say Dumper($params) if $self->debug;
+                say "Params: ", Dumper($params) if $self->debug;
                 $owner->btn_ok->enabled(1);
                 $self->indicator_parameter_wizard($owner->gbox_params,
                         $txt, $grp, $params);
@@ -1208,6 +1320,10 @@ sub download_data {
     #TODO: check symbol validity
     my $csv = sprintf "%s_%d_%d.csv", $symbol, $start->ymd(''), $end->ymd('');
     $csv = File::Spec->catfile($self->tmpdir, $csv);
+    if (defined $current->{csv}) {
+        $csv = $current->{csv};
+        say "Using $csv as it was chosen" if $self->debug;
+    }
     $self->progress_bar_update($pbar) if $pbar;
     my $data;
     unlink $csv if $current->{force_download};
@@ -1255,7 +1371,7 @@ sub download_data {
         $data = PDL->rcols($csv, [], { COLSEP => ',', DEFTYPE => PDL::double});
         $self->progress_bar_update($pbar) if $pbar;
     }
-    return ($data, $symbol);
+    return ($data, $symbol, $csv);
 }
 
 sub display_data {
@@ -1277,7 +1393,8 @@ sub display_data {
                 my ($w, $oldidx, $newidx) = @_;
                 my $owner = $w->owner;
                 say "Tab changed from $oldidx to $newidx" if $self->debug;
-                return if $oldidx == $newidx;
+                return if ($oldidx == $newidx and !$self->tab_was_closed);
+                $self->tab_was_closed(0);
                 # ok find the detailed-list object and use it
                 my ($data, $symbol, $indicators) = $self->_get_tab_data($w, $newidx);
                 my $type = $self->current->{plot_type} || 'OHLC';
@@ -1305,6 +1422,7 @@ sub display_data {
     # default headers
     my $headers = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume'];
     my $existing_indicators = [];
+    my $info;
     for my $idx (0 .. $pc) {
         my @wids = $nt->widgets_from_page($idx);
         next unless @wids;
@@ -1314,6 +1432,7 @@ sub display_data {
                 say "Found existing ", $_->name, " at $idx" if $self->debug;
                 $headers = $_->headers if defined $_->headers;
                 push @$existing_indicators, @{$_->{-indicators}} if exists $_->{-indicators};
+                $info = $_->{-info} if exists $_->{-info};
                 $nt->delete_widget($_);
             }
             $pageno = $idx;
@@ -1382,13 +1501,33 @@ sub display_data {
     $dl->{-pdl} = $data;
     $dl->{-symbol} = $symbol;
     $dl->{-indicators} = $existing_indicators if defined $existing_indicators;
+    $dl->{-info} = $info || {};
     1;
+}
+
+sub enable_menu_options {
+    my $self = shift;
+    my $win = shift || $self->main;
+    # enable the menu option now that we have something open
+    $win->menu->security_save->enabled(1);
+    $win->menu->security_saveas->enabled(1);
+    $win->menu->security_close->enabled(1);
+    $win->menu->plot_ohlc->enabled(1);
+    $win->menu->plot_ohlcv->enabled(1);
+    $win->menu->plot_close->enabled(1);
+    $win->menu->plot_closev->enabled(1);
+    $win->menu->plot_cdl->enabled(1);
+    $win->menu->plot_cdlv->enabled(1);
+    $win->menu->add_indicator->enabled(1);
+    $win->menu->edit_rules->enabled(1);
 }
 
 sub disable_menu_options {
     my $self = shift;
     my $win = $self->main;
     # disable the menu option now that we have nothing open
+    $win->menu->security_save->enabled(0);
+    $win->menu->security_saveas->enabled(0);
     $win->menu->security_close->enabled(0);
     $win->menu->plot_ohlc->enabled(0);
     $win->menu->plot_ohlcv->enabled(0);
@@ -1398,6 +1537,140 @@ sub disable_menu_options {
     $win->menu->plot_cdlv->enabled(0);
     $win->menu->add_indicator->enabled(0);
     $win->menu->remove_indicator->enabled(0);
+    $win->menu->edit_rules->enabled(0);
+}
+
+#rudimentary
+sub get_model {
+    my ($self, $data, $symbol, $indicators) = @_;
+    if (defined $data and defined $symbol) {
+        my $sd = $data->at(0, 0);
+        my $ed = $data->at($data->dim(0) - 1, 0);
+        my $tz = $self->timezone;
+        my %saved = (
+            start_date => $sd,
+            end_date => $ed,
+            symbol => $symbol,
+        );
+        if ($indicators and ref $indicators eq 'ARRAY') {
+            my $arr = [];
+            foreach (@$indicators) {
+                push @$arr, $_->{indicator};
+            }
+            $saved{indicators} = $arr;
+        } elsif ($indicators and ref $indicators eq 'HASH') {
+            $saved{indicators} = [$indicators->{indicator}];
+        }
+        return wantarray ? %saved : \%saved;
+    }
+}
+
+#rudimentary
+sub save_current_tab {
+    my ($self, $win, $save_as, $name) = @_;
+    return unless $win;
+    my ($data, $symbol, $indicators) = (defined $name) ?
+            $self->get_tab_data_by_name($win, $name) :
+            $self->get_tab_data($win);
+    # in save-as mode do not get historical file name
+    my ($info, $tname) = (defined $name) ?
+        $self->get_tab_info_by_name($win, $name) :
+        $self->get_tab_info($win);
+    my $saved = $self->get_model($data, $symbol, $indicators);
+    return unless $saved;
+    my $tz = $self->timezone;
+    $saved->{saved_at} = DateTime->now(time_zone => $tz)->iso8601();
+    say "Saving the model: ", Dumper($saved) if $self->debug;
+    my $mfile;
+    if ($info and $info->{filename} and not $save_as) {
+        $mfile = $info->{filename};
+    } else {
+        my $dlg = Prima::SaveDialog->new(
+            defaultExt => 'yml',
+            fileName => $symbol,
+            filter => [
+                ['financeta files' => '*.yml'],
+                ['All files' => '*'],
+            ],
+            filterIndex => 0,
+            multiSelect => 0,
+            overwritePrompt => 1,
+            pathMustExist => 1,
+            directory => $self->datadir,
+        );
+        $mfile = $dlg->fileName if $dlg->execute;
+        $mfile = File::Spec->catfile($self->datadir, $mfile) unless ($mfile =~ /^\//);
+    }
+    if ($info and defined $info->{rules}) {
+        $saved->{rules} = $info->{rules};
+    } else {
+        if (exists $self->editors->{$tname}) {
+            $saved->{rules} = $self->editors->{$tname}->get_text;
+        }
+    }
+    $saved->{old_filename} = $info->{old_filename} if defined $info and defined $info->{old_filename};
+    $saved->{csv} = $info->{csv} if defined $info and defined $info->{csv};
+    if ($mfile) {
+        $saved->{filename} = $mfile;
+        say "You have selected $mfile to save the tab info into." if $self->debug;
+        YAML::Any::DumpFile($mfile, $saved) or message("Unable to save to $mfile");
+        $self->set_tab_info($win, $saved);
+        1;
+    } else {
+        carp "Saving the tab was canceled.";
+    }
+}
+
+#rudimentary
+sub load_new_tab {
+    my ($self, $win) = @_;
+    return unless $win;
+    my $dlg = Prima::OpenDialog->new(
+        defaultExt => 'yml',
+        filter => [
+            ['financeta files' => '*.yml'],
+            ['All files' => '*'],
+        ],
+        filterIndex => 0,
+        fileMustExist => 1,
+        multiSelect => 0,
+        directory => $self->datadir,
+    );
+    my $mfile = $dlg->fileName if $dlg->execute;
+    return unless $mfile;
+    return unless -e $mfile;
+    my $saved = YAML::Any::LoadFile($mfile);
+    return unless $saved;
+    my $tz = $self->timezone;
+    my $current = {
+        start_date => DateTime->from_epoch(epoch => $saved->{start_date}, time_zone => $tz),
+        end_date => DateTime->from_epoch(epoch => $saved->{end_date}, time_zone => $tz),
+        symbol => $saved->{symbol},
+        force_download => 0,
+    };
+    $current->{csv} = $saved->{csv} if defined $saved->{csv};
+    my $bar = $self->progress_bar_create($win, 'Loading...');
+    my ($data, $symbol, $csv) = $self->download_data($bar, $current);
+    say "Loading the data into tab" if $self->debug;
+    $saved->{csv} = $csv if defined $csv;
+    # overwrite the filename for saving
+    if (defined $saved->{filename} and $mfile ne $saved->{filename}) {
+        $saved->{old_filename} = $saved->{filename};
+    }
+    $saved->{filename} = $mfile;
+    $self->display_data($win, $data, $symbol);
+    $self->enable_menu_options($win);
+    $self->set_tab_info($win, $saved);
+    say "Running the indicators and updating tab" if $self->debug;
+    $self->progress_bar_close($bar);
+    if ($self->run_and_display_indicator($win, $data, $symbol,
+            $saved->{indicators})) {
+        # this is specially done
+        $win->menu->remove_indicator->enabled(1);
+    }
+    my ($adata, $asym, $aind) = $self->get_tab_data($win);
+    my $type = $self->current->{plot_type} || 'OHLC';
+    $self->plot_data($win, $adata, $asym, $type, $aind);
 }
 
 sub close_current_tab {
@@ -1408,14 +1681,29 @@ sub close_current_tab {
     my $nt = $win->data_tabs;
     my $idx = $nt->pageIndex;
     if ($nt->pageCount == 1) {
-        $nt->close;
+        foreach my $e (keys %{$self->editors}) {
+            my $ed = $self->editors->{$e};
+            $ed->close;
+        }
         if ($win->{plot}) {
             $win->{plot}->close();
         }
+        $nt->close;
         $self->disable_menu_options;
     } else {
         my $v = eval $Prima::VERSION;
         if ($v > 1.40) {
+            $self->tab_was_closed(1);
+            # find corresponding editors and close them
+            my @wids = $win->data_tabs->widgets_from_page($idx);
+            if (@wids) {
+                my ($dl) = grep { $_->name =~ /^tab_/i } @wids;
+                if ($dl and exists $self->editors->{$dl->name}) {
+                    say "Closing the rules editor for ", $dl->name if $self->debug;
+                    $self->editors->{$dl->name}->close;
+                    delete $self->editors->{$dl->name};
+                }
+            }
             $nt->delete_page($idx);
             $nt->pageIndex($idx >= $nt->pageCount ?
                 $nt->pageCount - 1 : $idx);
@@ -1466,7 +1754,7 @@ sub get_tab_data_by_name($$) {
         my @nt = $win->data_tabs->widgets_from_page($idx);
         next unless @nt;
         my ($dl) = grep { $_->name =~ /^tab_/i } @nt;
-        if ($dl and $dl->{-symbol} eq $name) {
+        if ($dl and ($dl->{-symbol} eq $name) or ($dl->name eq $name)) {
             say "Found $name on page $idx" if $self->debug;
             return ($dl->{-pdl},
                     $dl->{-symbol},
@@ -1475,6 +1763,37 @@ sub get_tab_data_by_name($$) {
         }
     }
     return undef;
+}
+
+sub get_tab_info {
+    my ($self, $win) = @_;
+    return unless $win;
+    my @tabs = grep { $_->name =~ /data_tabs/ } $win->get_widgets();
+    return unless @tabs;
+    my $idx = $win->data_tabs->pageIndex;
+    my @nt = $win->data_tabs->widgets_from_page($idx);
+    return unless @nt;
+    my ($dl) = grep { $_->name =~ /^tab_/i } @nt;
+    if ($dl) {
+        say "Getting info for ", $dl->name if $self->debug;
+        return wantarray ? ($dl->{-info}, $dl->name) : $dl->{-info};
+    }
+}
+
+sub set_tab_info($$) {
+    my ($self, $win, $info) = @_;
+    return unless $win;
+    my @tabs = grep { $_->name =~ /data_tabs/ } $win->get_widgets();
+    return unless @tabs;
+    my $idx = $win->data_tabs->pageIndex;
+    my @nt = $win->data_tabs->widgets_from_page($idx);
+    return unless @nt;
+    my ($dl) = grep { $_->name =~ /^tab_/i } @nt;
+    if ($dl) {
+        say "Setting info for ", $dl->name if $self->debug;
+        $dl->{-info} = $info;
+        return 1;
+    }
 }
 
 sub set_tab_data_by_name($$) {
@@ -1495,6 +1814,46 @@ sub set_tab_data_by_name($$) {
             $dl->{-pdl} = $p;
             $dl->{-indicators}= $ind;
             $dl->headers($hdr);
+            return 1;
+        }
+    }
+}
+
+sub get_tab_info_by_name {
+    my ($self, $win, $name) = @_;
+    return unless $win;
+    return unless $name;
+    my @tabs = grep { $_->name =~ /data_tabs/ } $win->get_widgets();
+    return unless @tabs;
+    my $pc = $win->data_tabs->pageCount - 1;
+    return unless $pc >= 0;
+    for my $idx (0 .. $pc) {
+        my @nt = $win->data_tabs->widgets_from_page($idx);
+        next unless @nt;
+        my ($dl) = grep { $_->name =~ /^tab_/i } @nt;
+        if ($dl and $dl->name eq $name) {
+            say "Getting info for ", $dl->name if $self->debug;
+            return wantarray ? ($dl->{-info}, $dl->name) : $dl->{-info};
+        }
+    }
+}
+
+sub set_tab_info_by_name {
+    my ($self, $win, $name, $info) = @_;
+    return unless $win;
+    return unless $name;
+    return unless $info;
+    my @tabs = grep { $_->name =~ /data_tabs/ } $win->get_widgets();
+    return unless @tabs;
+    my $pc = $win->data_tabs->pageCount - 1;
+    return unless $pc >= 0;
+    for my $idx (0 .. $pc) {
+        my @nt = $win->data_tabs->widgets_from_page($idx);
+        next unless @nt;
+        my ($dl) = grep { $_->name =~ /^tab_/i } @nt;
+        if ($dl and $dl->name eq $name) {
+            say "Setting info for ", $dl->name if $self->debug;
+            $dl->{-info} = $info;
             return 1;
         }
     }
@@ -1523,10 +1882,49 @@ sub get_tab_indicators {
     return $indicators;
 }
 
+sub open_editor {
+    my ($self, $rules, $tabname) = @_;
+    # update the editor window with rules
+    # once the editor window saves something update the parent tab's rules
+    # object
+    my $editor = $self->editors->{$tabname} || $self->_build_editor($tabname);
+    if ($editor->update_editor($rules || '#AUTOGENERATE', $tabname)) {
+    }
+    $self->editors->{$tabname} = $editor;
+}
+
+sub update_editor {
+    my ($self, $txt, $tabname, $is_closing) = @_;
+    unless (defined $tabname) {
+        carp "Tab-name not retrieved. not sure which tab to save it for.";
+        return;
+    }
+    # ok we have a tab for which we need to save info
+    my $info = $self->get_tab_info_by_name($self->main, $tabname);
+    $info->{rules} = $txt if $info;
+    say "Retrieved info - ", Dumper($info), " for tab($tabname)" if $self->debug and $info;
+    carp "Unable to retrieve info for $tabname" unless $info;
+    if ($self->set_tab_info_by_name($self->main, $tabname, $info)) {
+        say "Saving tab($tabname) info to file" if $self->debug;
+        my $rc = $self->save_current_tab($self->main, 0, $tabname);
+        carp "Unable to save information for $tabname" unless $rc;
+    } else {
+        carp "Unable to save editor rules for tab $tabname";
+    }
+    delete $self->editors->{$tabname} if $is_closing;
+}
+
+sub close_editor {
+    my ($self, $tabname) = @_;
+    delete $self->editors->{$tabname} if defined $tabname;
+}
+
 sub plot_data {
     my $self = shift;
     if (lc($self->plot_engine) eq 'gnuplot') {
         say "Using Gnuplot to do plotting" if $self->debug;
+        say "PDL::Graphics::Gnuplot $PDL::Graphics::Gnuplot::VERSION is being used"
+        if $self->debug;
         return $self->plot_data_gnuplot(@_);
     }
     carp $self->plot_engine . " is not supported yet.";
@@ -1589,6 +1987,11 @@ sub plot_data_gnuplot {
     $pwin->reset();
     # use multiplot
     $pwin->multiplot();
+    my %binmode = (binary => 1);
+    if ($^O !~ /Win32/ and $Alien::Gnuplot::version < 4.6) {
+        say "Binary mode is set to 0 due to gnuplot $Alien::Gnuplot::version" if $self->debug;
+        $binmode{binary} = 0;
+    }
     if ($type eq 'OHLC') {
         my %addon_gen = ();
         if (@addon_plot) {
@@ -1599,6 +2002,7 @@ sub plot_data_gnuplot {
             $addon_gen{rmargin} = 2;
         }
         $pwin->plot({
+                %binmode,
                 object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
                 title => ["$symbol Open-High-Low-Close", textcolor => 'rgb "white"'],
                 key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1621,6 +2025,7 @@ sub plot_data_gnuplot {
         );
         if (@addon_plot) {
             $pwin->plot({
+                    %binmode,
                     object => '1',
                     title => '',
                     key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1656,6 +2061,7 @@ sub plot_data_gnuplot {
             $addon_vol{object} = '1'; # needed as otherwise the addon plot does it
         }
         $pwin->plot({
+                %binmode,
                 object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
                 xlabel => ['Date', textcolor => 'rgb "yellow"'],
                 ylabel => ['Price', textcolor => 'rgb "yellow"'],
@@ -1681,6 +2087,7 @@ sub plot_data_gnuplot {
         );
         if (@addon_plot) {
             $pwin->plot({
+                    %binmode,
                     object => '1',
                     title => '',
                     key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1701,6 +2108,7 @@ sub plot_data_gnuplot {
             );
         }
         $pwin->plot({
+                %binmode,
                 title => '',
                 key => ['on', 'outside', textcolor => 'rgb "yellow"'],
                 border => 'linecolor rgbcolor "white"',
@@ -1734,6 +2142,7 @@ sub plot_data_gnuplot {
         }
         # use candlesticks feature of Gnuplot
         $pwin->plot({
+                %binmode,
                 object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
                 title => ["$symbol Open-High-Low-Close", textcolor => 'rgb "white"'],
                 key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1757,6 +2166,7 @@ sub plot_data_gnuplot {
         );
         if (@addon_plot) {
             $pwin->plot({
+                    %binmode,
                     object => '1',
                     title => '',
                     key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1792,6 +2202,7 @@ sub plot_data_gnuplot {
             $addon_vol{object} = '1'; # needed as otherwise the addon plot does it
         }
         $pwin->plot({
+                %binmode,
                 object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
                 title => ["$symbol Price & Volume", textcolor => "rgb 'white'"],
                 key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1819,6 +2230,7 @@ sub plot_data_gnuplot {
         );
         if (@addon_plot) {
             $pwin->plot({
+                    %binmode,
                     object => '1',
                     title => '',
                     key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1839,6 +2251,7 @@ sub plot_data_gnuplot {
             );
         }
         $pwin->plot({
+                %binmode,
                 title => '',
                 ylabel => ['Volume (in 1M)', textcolor => 'rgb "yellow"'],
                 key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1877,6 +2290,7 @@ sub plot_data_gnuplot {
             $addon_vol{object} = '1'; # needed as otherwise the addon plot does it
         }
         $pwin->plot({
+                %binmode,
                 object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
                 title => ["$symbol Price & Volume", textcolor => "rgb 'white'"],
                 key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1902,6 +2316,7 @@ sub plot_data_gnuplot {
         );
         if (@addon_plot) {
             $pwin->plot({
+                    %binmode,
                     object => '1',
                     title => '',
                     key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1922,6 +2337,7 @@ sub plot_data_gnuplot {
             );
         }
         $pwin->plot({
+                %binmode,
                 title => '',
                 key => ['on', 'outside', textcolor => 'rgb "yellow"'],
                 border => 'linecolor rgbcolor "white"',
@@ -1955,6 +2371,7 @@ sub plot_data_gnuplot {
             $addon_gen{rmargin} = 2;
         }
         $pwin->plot({
+                %binmode,
                 object => '1 rectangle from screen 0,0 to screen 1,1 fillcolor rgb "black" behind',
                 title => ["$symbol Close Price", textcolor => 'rgb "white"'],
                 key => ['on', 'outside', textcolor => 'rgb "yellow"'],
@@ -1977,6 +2394,7 @@ sub plot_data_gnuplot {
         );
         if (@addon_plot) {
             $pwin->plot({
+                    %binmode,
                     object => '1',
                     title => '',
                     key => ['on', 'outside', textcolor => 'rgb "yellow"'],

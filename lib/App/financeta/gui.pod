@@ -11,7 +11,7 @@ research with Technical Analysis.
 
 =head1 VERSION
 
-0.09
+0.10
 
 =head1 METHODS
 
@@ -67,7 +67,7 @@ The CSV files that are downloaded and temporary data is stored here.
 
 =over
 
-=item L<PDL::Finance::Talib>
+=item L<PDL::Finance::TA>
 
 This module will be used to add technical analysis to the charts.
 
